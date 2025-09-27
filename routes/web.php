@@ -16,7 +16,7 @@ use App\Modules\Orders\ReturnRequestController;
 use App\Modules\HealthIssue\HealthIssueController;
 use App\Modules\DeliveryPrice\DeliveryPriceController;
 use App\Modules\ContactMessage\ContactMassageController;
-
+use App\Modules\Points\PointController;
 
 Route::get('/', function () {
     return redirect('/dashboard');
@@ -60,6 +60,11 @@ Route::prefix('dashboard')->name('dashboard.')->group(function () {
     Route::delete('/contact-messages/{id}', [ContactMassageController::class, 'destroy'])
     ->name('contact-messages.destroy')
     ->middleware('auth:admin');
+    Route::get('points', [PointController::class, 'index'])->name('points.index');
+Route::patch('/points/{order}/redeem', [PointController::class, 'redeemPoints'])
+    ->name('points.redeem');
+    Route::patch('/dashboard/points/redeem-multiple', [PointController::class, 'redeemMultiple'])
+    ->name('points.redeemMultiple');
 
 })->middleware('auth:admin');
 

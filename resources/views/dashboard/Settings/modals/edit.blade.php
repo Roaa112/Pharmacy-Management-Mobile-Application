@@ -55,7 +55,7 @@
                         <input type="text" name="zaincash" class="form-control" value="{{ old('zaincash', $setting->zaincash) }}">
                     </div>
 
-                     
+
                     <div class="form-group">
                         <label>Map Location URL</label>
                         <input type="url" name="map_location_url" class="form-control" value="{{ old('map_location_url', $setting->map_location_url) }}">
@@ -69,6 +69,10 @@
                      <div class="form-group">
                         <label>Get points</label>
                         <input type="text" name="get_y" class="form-control" value="{{ old('get_y', $setting->get_y) }}">
+                    </div>
+                     <div class="form-group">
+                        <label>Points Validity Days</label>
+                        <input type="text" name="points_validity_days" class="form-control" value="{{ old('points_validity_days', $setting->points_validity_days) }}">
                     </div>
                 <div class="modal-footer">
                     <button type="submit" class="btn btn-success">Update Setting</button>

@@ -393,6 +393,12 @@ return [
             'label_color' => 'success',
         ],
         [
+            'text' => 'Points',
+            'url' => 'dashboard/points',
+            'icon' => 'fas fa-star',
+            'label_color' => 'success',
+        ],
+        [
             'text' => 'Refund',
             'url' => 'dashboard/returns',
             'icon' => 'fas fa-undo-alt', // أيقونة الإرجاع

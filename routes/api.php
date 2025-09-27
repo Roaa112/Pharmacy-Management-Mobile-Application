@@ -5,6 +5,7 @@ use App\Modules\Cart\CartController;
 use App\Modules\User\UserController;
 use Illuminate\Support\Facades\Route;
 use App\Modules\Orders\OrderController;
+use App\Modules\Points\ApiPointsController;
 
 use App\Modules\User\ApiUserController;
 use App\Modules\DeliveryPrice\DeliveryPriceController;
@@ -77,7 +78,7 @@ Route::middleware([\App\Http\Middleware\SetLocaleLang::class])
           Route::get('categories/{category_id}/new-arrival-products', [ApiCategoryController::class, 'newArrivalProducts']);
     //fake
  Route::get('Best-selling-products', [ApiProductController::class, 'productSell']);
-          
+
            Route::get('delivary_prices', [DeliveryPriceController::class, 'indexapi']);
         });  // <-- هذه مغل بشكل صحيح
 });
@@ -99,7 +100,7 @@ Route::middleware('auth:sanctum')->post('logout', [UserController::class, 'logou
 Route::middleware(['auth:sanctum'])->middleware(['auth:sanctum', \App\Http\Middleware\SetLocaleLang::class])->get('user/favorites', [FavoriteController::class, 'list']);
 Route::middleware(['auth:sanctum'])->post('user/favorites/{productId}', [FavoriteController::class, 'toggle']);
 Route::middleware(['auth:sanctum'])->post('user/products/{product}/rate', [ProductReviewController::class, 'store']);
-Route::middleware(['auth:sanctum'])->get('user/products/{product}/reviews', [ProductReviewController::class, 'index']);
+Route::get('user/products/{product}/reviews', [ProductReviewController::class, 'index']);
 
 Route::middleware(['auth:sanctum'])->get('user/track-order/{id}', [OrderController::class, 'track']);
 
@@ -197,9 +198,8 @@ Route::middleware('auth:sanctum')->prefix('user/cart')->group(function () {
 });
 
 
-// Route::controller(LocationController::class)->prefix('location')->group(function () {
-//     Route::get('city', 'listAllCites');
-//     Route::get('area', 'listAllAreas');
-// })->middleware('auth:sanctum');
-
-
+Route::middleware('auth:sanctum')->prefix('user')->group(function () {
+    Route::get('points/valid', [ApiPointsController::class, 'getValidPoints']);
+    Route::get('points/expired', [ApiPointsController::class, 'getExpiredPoints']);
+    Route::get('points/notvalid', [ApiPointsController::class, 'getConsumedPoints']);
+});

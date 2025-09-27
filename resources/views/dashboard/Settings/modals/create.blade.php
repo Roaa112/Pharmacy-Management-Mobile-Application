@@ -68,6 +68,10 @@
                         <label>Get points</label>
                         <input type="text" name="get_y" class="form-control">
                     </div>
+                     <div class="form-group">
+                        <label>Points Validity Days</label>
+                        <input type="text" name="points_validity_days" class="form-control">
+                    </div>
                 <div class="modal-footer">
                     <button type="submit" class="btn btn-primary">Add Setting</button>
                 </div>

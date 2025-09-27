@@ -12,7 +12,7 @@ use App\Models\{Order, OrderItem, Cart, Address, DeliveryPrice, Setting, Discoun
 
 class OrderController extends Controller
 {
-  
+
   public function points(Request $request)
   {
       $user = auth()->user();
@@ -21,6 +21,7 @@ class OrderController extends Controller
                    ->select(
                        'id as order_name',  // ممكن تغا لـ name لو العمد موجود
                        'points_earned',
+                       'points_status',
                        'created_at'
                    )
                    ->get();
@@ -29,7 +30,7 @@ class OrderController extends Controller
         'orders' => $orders
     ]);
   }
-  
+
 // public function checkout(Request $request)
 // {
 //     $request->validate([
@@ -409,7 +410,7 @@ public function checkout(Request $request)
     ], 201);
 }
 
-  
+
 
 public function updateStatus(Request $request, Order $order)
 {
@@ -535,7 +536,7 @@ public function groupedByStatus(Request $request)
     $orders = \App\Models\Order::withSum('items', 'quantity')
 
         ->where('user_id', $user->id)
-       
+
         ->orderByDesc('created_at')
         ->get();
 

@@ -22,7 +22,8 @@ class Setting extends Model
         'map_location_url',
         'spend_x',
         'get_y',
-        'zaincash'
+        'zaincash',
+        'points_validity_days',
     ];
 
     protected $appends = [

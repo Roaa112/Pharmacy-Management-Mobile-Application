@@ -12,6 +12,7 @@ class Order extends Model
 
     protected $fillable = [
         'user_id',
+        'points_status',
         'address_id',
         'payment_method',
       'notes',
@@ -19,7 +20,7 @@ class Order extends Model
         'delivery_fee',
         'total_price',
         'gift_description',
-        'gift_rule_id',     
+        'gift_rule_id',
         'points_earned',
         'status'
     ];
