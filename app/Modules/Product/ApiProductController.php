@@ -15,19 +15,18 @@ use App\Modules\Product\Requests\ListAllProductsRequest;
 
 class ApiProductController extends Controller
 {
-    public function __construct(private ProductService $productService ,private ProductsRepository $productRepository)
+    public function __construct(private ProductService $productService, private ProductsRepository $productRepository) {}
+    public function listAllProducts(ListAllProductsRequest $request)
     {
-    }
- public function listAllProducts(ListAllProductsRequest $request)
-{
-    $products = $this->productService->listAllProducts($request->all());
 
-    return successJsonResponse(
-        $products['data'],
-        __('Products.success.get_all_brands'),
-        $products['count']
-    );
-}
+        $products = $this->productService->listAllProducts($request->all());
+
+        return successJsonResponse(
+            $products['data'],
+            __('Products.success.get_all_brands'),
+            $products['count']
+        );
+    }
 
 
     public function listAllProductsOnSale(ListAllProductsRequest $request)
@@ -82,9 +81,9 @@ class ApiProductController extends Controller
         ]);
     }
 
-    public function latestProducts()
+    public function latestProducts(Request $request)
     {
-        $products = $this->productService->getLatestProducts();
+        $products = $this->productService->getLatestProducts($request);
 
         return successJsonResponse(
             $products['data'],
@@ -92,9 +91,9 @@ class ApiProductController extends Controller
             $products['count']
         );
     }
-    public function topDiscountProducts()
+    public function topDiscountProducts(Request $request)
     {
-        $products = $this->productService->getTopDiscountProducts();
+        $products = $this->productService->getTopDiscountProducts($request);
 
         return successJsonResponse(
             $products['data'],
@@ -129,30 +128,51 @@ class ApiProductController extends Controller
 
 
 
-public function productSell(Request $request)
-{
-    $topSelling = OrderItem::select(
+
+    public function productSell(Request $request)
+    {
+        $limit = (int) $request->get('limit', 10);
+        $offset = (int) $request->get('offset', 0);
+        $sort = strtoupper($request->get('sort', 'DESC'));
+        $sortBy = $request->get('sortBy', 'total_sold');
+
+        // Whitelist of sortable columns to prevent SQL injection
+        $allowedSortBy = ['total_sold', 'product_id', 'id'];
+        if (!in_array($sortBy, $allowedSortBy)) {
+            $sortBy = 'total_sold';
+        }
+
+        // Enforce only ASC or DESC
+        if (!in_array($sort, ['ASC', 'DESC'])) {
+            $sort = 'DESC';
+        }
+
+        $topSelling = OrderItem::select(
             'product_id',
             DB::raw('SUM(quantity) as total_sold')
         )
-        ->with('product') // لتحميل بيانات المنتج
-        ->groupBy('product_id')
-        ->orderByDesc('total_sold')
-        ->take($request->get('limit', 10)) // عدد النتائج المطلوبة، افتراضيًا 10
-        ->get();
+            ->with('product')
+            ->groupBy('product_id')
+            ->orderBy($sortBy, $sort)
+            ->offset($offset)
+            ->limit($limit)
+            ->get();
 
-    return response()->json([
-        'success' => true,
-        'data' => $topSelling->map(function ($item) {
-           return [
-    'total_sold' => $item->total_sold,
-    'product' => $item->product,
-];
-
-        }),
-    ]);
-}
-
-
-
+        return response()->json([
+            'success' => true,
+            'data' => $topSelling->map(function ($item) {
+                return [
+                    'total_sold' => (int) $item->total_sold,
+                    'product' => $item->product,
+                ];
+            }),
+            'meta' => [
+                'limit' => $limit,
+                'offset' => $offset,
+                'sort' => $sort,
+                'sortBy' => $sortBy,
+            ],
+            'count' => $topSelling->count(),
+        ]);
+    }
 }
