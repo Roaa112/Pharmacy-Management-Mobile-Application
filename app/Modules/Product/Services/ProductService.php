@@ -14,44 +14,42 @@ use App\Modules\Product\Requests\ListAllProductsRequest;
 
 class ProductService
 {
-    public function __construct(private ProductsRepository $productsRepository)
+    public function __construct(private ProductsRepository $productsRepository) {}
+    private function handleMainImage(array &$data, $request, Product $product = null): void
     {
-    }
-     private function handleMainImage(array &$data, $request, Product $product = null): void
-        {
 
-            if ($request->hasFile('image')) {
-                $image = $request->file('image');
+        if ($request->hasFile('image')) {
+            $image = $request->file('image');
 
-                if (!$image->isValid()) {
-                    return;
-                }
-
-                // انسخ ال ؤقتًا قبل أي ميت (نتجنب فقدان لمف امؤقت)
-                $tmpPath = $image->getPathname();
-                $extension = $image->getClientOriginalExtension();
-
-                $filename = uniqid() . '.' . $extension;
-                $destinationPath = public_path('products');
-
-                // حف الصورة اقديمة لو فه منتج
-                if ($product && $product->image && file_exists(public_path($product->image))) {
-                    try {
-                        unlink(public_path($product->image));
-                    } catch (\Exception $e) {
-                        // Log::error("Error deleting image: " . $e->getMessage());
-                    }
-                }
-
-                // انخ الصرة بكل يدوي لو اللف لمؤت موجود
-                if (file_exists($tmpPath)) {
-                    copy($tmpPath, $destinationPath . '/' . $filename);
-                    $data['image'] = 'products/' . $filename;
-                }
-            } elseif ($product) {
-                $data['image'] = $product->image;
+            if (!$image->isValid()) {
+                return;
             }
+
+            // انسخ ال ؤقتًا قبل أي ميت (نتجنب فقدان لمف امؤقت)
+            $tmpPath = $image->getPathname();
+            $extension = $image->getClientOriginalExtension();
+
+            $filename = uniqid() . '.' . $extension;
+            $destinationPath = public_path('products');
+
+            // حف الصورة اقديمة لو فه منتج
+            if ($product && $product->image && file_exists(public_path($product->image))) {
+                try {
+                    unlink(public_path($product->image));
+                } catch (\Exception $e) {
+                    // Log::error("Error deleting image: " . $e->getMessage());
+                }
+            }
+
+            // انخ الصرة بكل يدوي لو اللف لمؤت موجود
+            if (file_exists($tmpPath)) {
+                copy($tmpPath, $destinationPath . '/' . $filename);
+                $data['image'] = 'products/' . $filename;
+            }
+        } elseif ($product) {
+            $data['image'] = $product->image;
         }
+    }
     public function updateProduct(Product $product, UpdateProductRequest $request): ?Product
     {
         $data = $request->validated();
@@ -120,26 +118,26 @@ class ProductService
 
 
     private function handlePromotionData(array &$data, $request, Product $product = null): void
-        {
-            if ($request->filled('promotion_type')) {
-                $data['promotion_type'] = $request->promotion_type;
+    {
+        if ($request->filled('promotion_type')) {
+            $data['promotion_type'] = $request->promotion_type;
 
-                if ($request->promotion_type === 'discount') {
-                    $data['saleable_type'] = \App\Models\Discount::class;
-                    $data['saleable_id'] = $request->discount_id;
-                } elseif ($request->promotion_type === 'flash_sale') {
-                    $data['saleable_type'] = \App\Models\FlashSale::class;
-                    $data['saleable_id'] = $request->flash_sale_id;
-                } else {
-                    $data['saleable_type'] = null;
-                    $data['saleable_id'] = null;
-                }
-            } elseif ($product) {
-                $data['promotion_type'] = $product->promotion_type;
-                $data['saleable_type'] = $product->saleable_type;
-                $data['saleable_id'] = $product->saleable_id;
+            if ($request->promotion_type === 'discount') {
+                $data['saleable_type'] = \App\Models\Discount::class;
+                $data['saleable_id'] = $request->discount_id;
+            } elseif ($request->promotion_type === 'flash_sale') {
+                $data['saleable_type'] = \App\Models\FlashSale::class;
+                $data['saleable_id'] = $request->flash_sale_id;
+            } else {
+                $data['saleable_type'] = null;
+                $data['saleable_id'] = null;
             }
+        } elseif ($product) {
+            $data['promotion_type'] = $product->promotion_type;
+            $data['saleable_type'] = $product->saleable_type;
+            $data['saleable_id'] = $product->saleable_id;
         }
+    }
 
 
     public function handleStoreProduct(array $data, $request)
@@ -149,9 +147,10 @@ class ProductService
         if ($request->hasFile('image')) {
             $image = $request->file('image');
             $filename = uniqid() . '.' . $image->getClientOriginalExtension();
-            $image->move(public_path('products'), $filename);
-            $data['image'] = 'products/' . $filename;
+            $path = $image->storeAs('products', $filename, 'public');
+            $data['image'] = 'storage/' . $path;
         }
+
 
         $product = $this->createProduct($data);
 
@@ -160,8 +159,19 @@ class ProductService
         if ($request->filled('health_issues')) {
             $product->healthIssues()->sync($data['health_issues']);
         }
+        if ($request->filled('sizes')) {
+            $sizes = collect($request->input('sizes', []))
+                ->filter(function ($size) {
+                    return !empty($size['size']) && !empty($size['price']) && !empty($size['stock']);
+                })
+                ->values()
+                ->all();
 
-        $this->handleSizes($product, $request->input('sizes', []));
+            if (!empty($sizes)) {
+                $this->handleSizes($product, $sizes);
+            }
+        }
+
 
         return $product;
     }
@@ -201,15 +211,15 @@ class ProductService
         return $this->productsRepository->create($data);
     }
     public function listAllProducts(array $queryParameters)
-        {
-            $criteria = (new ListAllProductsRequest)->constructQueryCriteria($queryParameters);
-            $products = $this->productsRepository->findAllBy($criteria);
+    {
+        $criteria = (new ListAllProductsRequest)->constructQueryCriteria($queryParameters);
+        $products = $this->productsRepository->findAllBy($criteria);
 
-            return [
-                'data' => new ProductCollection($products['data']),
-                'count' => $products['count']
-            ];
-        }
+        return [
+            'data' => new ProductCollection($products['data']),
+            'count' => $products['count']
+        ];
+    }
 
 
     public function constructProductModel($request)
@@ -243,7 +253,7 @@ class ProductService
     {
         $result = $this->productsRepository->executeGetMany(Product::query(), $queryCriteria);
 
-      
+
         return $result;
     }
 
@@ -252,14 +262,14 @@ class ProductService
 
 
     // latest products
-   public function getLatestProducts(Request $request): array
+    public function getLatestProducts(Request $request): array
     {
-         $limit = request()->get('limit', 10);
+        $limit = request()->get('limit', 10);
         $offset = request()->get('offset', 0);
         $products = Product::with(['brand', 'category', 'sizes', 'saleable', 'productImages'])
             ->latest()
             ->take(10)
-             ->offset($offset)
+            ->offset($offset)
             ->limit($limit)
             ->get();
 
@@ -282,8 +292,8 @@ class ProductService
 
 
 
-   // top descount
-public function getTopDiscountProducts(Request $request): array
+    // top descount
+    public function getTopDiscountProducts(Request $request): array
     {
         $limit = $request->get('limit', 10);
         $offset = $request->get('offset', 0);
@@ -379,35 +389,35 @@ public function getTopDiscountProducts(Request $request): array
         ];
     }
 
- private function getProductsBytopDiscountRule($ruleId)
-{
-    $targets = DB::table('discount_rule_targets')
-        ->where('discount_rule_id', $ruleId)
-        ->get();
+    private function getProductsBytopDiscountRule($ruleId)
+    {
+        $targets = DB::table('discount_rule_targets')
+            ->where('discount_rule_id', $ruleId)
+            ->get();
 
-    $productQuery = Product::query();
+        $productQuery = Product::query();
 
-    $productQuery->where(function ($query) use ($targets) {
-        foreach ($targets as $target) {
-            if ($target->target_type === 'product') {
-                $query->orWhere('id', $target->target_id);
-            } elseif ($target->target_type === 'brand') {
-                $query->orWhere('brand_id', $target->target_id);
-            } elseif ($target->target_type === 'category') {
-                $query->orWhere('category_id', $target->target_id);
+        $productQuery->where(function ($query) use ($targets) {
+            foreach ($targets as $target) {
+                if ($target->target_type === 'product') {
+                    $query->orWhere('id', $target->target_id);
+                } elseif ($target->target_type === 'brand') {
+                    $query->orWhere('brand_id', $target->target_id);
+                } elseif ($target->target_type === 'category') {
+                    $query->orWhere('category_id', $target->target_id);
+                }
             }
-        }
-    });
+        });
 
-    return $productQuery
-        ->with(['sizes', 'productImages', 'brand', 'category'])
-        ->get();
-}
+        return $productQuery
+            ->with(['sizes', 'productImages', 'brand', 'category'])
+            ->get();
+    }
 
 
     // products on sale
 
-     public function listAllProductsOnSale(Request $request): array
+    public function listAllProductsOnSale(Request $request): array
     {
         $limit = $request->get('limit', 10);
         $offset = $request->get('offset', 0);
@@ -502,17 +512,15 @@ public function getTopDiscountProducts(Request $request): array
             ->whereIn('id', $productIds->unique())
             ->get();
     }
-   // show product
+    // show product
     public function getProductById($id)
     {
         return $this->productsRepository->find($id);
     }
 
-   // delete products
-   public function deleteProduct($id)
+    // delete products
+    public function deleteProduct($id)
     {
         return $this->productsRepository->delete($id);
     }
-
-
 }
