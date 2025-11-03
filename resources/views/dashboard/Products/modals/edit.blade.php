@@ -59,10 +59,10 @@
                     </div>
 
                     <!-- Other Fields -->
-                    <div class="form-group col-md-6">
+                    {{-- <div class="form-group col-md-6">
                         <label>Rate</label>
                         <input type="number" step="0.1" name="rate" value="{{ old('rate', $product->rate) }}" class="form-control">
-                    </div>
+                    </div> --}}
                     <div class="form-group col-md-6">
                         <label>Brand</label>
                         <select name="brand_id" class="form-control">

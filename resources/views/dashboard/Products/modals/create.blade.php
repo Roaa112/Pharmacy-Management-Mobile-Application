@@ -52,10 +52,10 @@
 </div>
 
 
-                    <div class="form-group col-md-6">
+                    {{-- <div class="form-group col-md-6">
                         <label>Rate</label>
                         <input type="number" step="0.1" name="rate" class="form-control">
-                    </div>
+                    </div> --}}
 
                     <div class="form-group col-md-6">
                         <label>Brand</label>
@@ -71,7 +71,7 @@
     <select name="category_id" class="form-control">
         @foreach($categories as $cat)
             <option value="{{ $cat->id }}">{{ $cat->name }}</option>
-            
+
             @if($cat->children && $cat->children->count())
                 @foreach($cat->children as $sub)
                     <option value="{{ $sub->id }}">-- {{ $sub->name }}</option>

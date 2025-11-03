@@ -53,28 +53,24 @@
           <label>Buy Target</label>
           <div class="d-flex gap-2">
             <select name="targets[0][type]" class="form-control w-25" id="targetTypeSelect">
-              <option value="">-- Select Type --</option>
               <option value="product">Product</option>
               <option value="brand">Brand</option>
               <option value="category">Category</option>
             </select>
 
             <select name="targets[0][id]" id="productSelect" class="form-control w-50 target-select d-none" disabled>
-              <option value="">Select Product</option>
               @foreach($products as $product)
                 <option value="{{ $product->id }}">{{ $product->name }}</option>
               @endforeach
             </select>
 
             <select name="targets[0][id]" id="brandSelect" class="form-control w-50 target-select d-none" disabled>
-              <option value="">Select Brand</option>
               @foreach($brands as $brand)
                 <option value="{{ $brand->id }}">{{ $brand->name }}</option>
               @endforeach
             </select>
 
             <select name="targets[0][id]" id="categorySelect" class="form-control w-50 target-select d-none" disabled>
-              <option value="">Select Category</option>
               @foreach($categories as $category)
                 <option value="{{ $category->id }}">{{ $category->name }}</option>
               @endforeach
@@ -89,28 +85,25 @@
             <input type="hidden" name="gift_targets[0][is_gift]" value="1">
 
             <select name="gift_targets[0][type]" class="form-control w-25" id="giftTargetTypeSelect">
-              <option value="">-- Select Type --</option>
               <option value="product">Product</option>
               <option value="brand">Brand</option>
               <option value="category">Category</option>
             </select>
 
+            {{-- No name attribute here by default --}}
             <select id="giftProductSelect" class="form-control w-50 gift-target-select d-none" disabled>
-              <option value="">Select Product</option>
               @foreach($products as $product)
                 <option value="{{ $product->id }}">{{ $product->name }}</option>
               @endforeach
             </select>
 
             <select id="giftBrandSelect" class="form-control w-50 gift-target-select d-none" disabled>
-              <option value="">Select Brand</option>
               @foreach($brands as $brand)
                 <option value="{{ $brand->id }}">{{ $brand->name }}</option>
               @endforeach
             </select>
 
             <select id="giftCategorySelect" class="form-control w-50 gift-target-select d-none" disabled>
-              <option value="">Select Category</option>
               @foreach($categories as $category)
                 <option value="{{ $category->id }}">{{ $category->name }}</option>
               @endforeach
@@ -138,25 +131,11 @@
 </div>
 
 @section('js')
-<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
-<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
-
 <script>
 document.addEventListener("DOMContentLoaded", function () {
   const typeSelect = document.getElementById("discountTypeSelect");
   const targetTypeSelect = document.getElementById("targetTypeSelect");
   const giftTargetTypeSelect = document.getElementById("giftTargetTypeSelect");
-
-  // ✅ انتظر حتى يظهر المودال لتفعيل Select2 (يحل مشكلة البحث داخل المودال)
-  $('#createDiscountModal').on('shown.bs.modal', function () {
-    $('#productSelect, #brandSelect, #categorySelect, #giftProductSelect, #giftBrandSelect, #giftCategorySelect')
-      .select2({
-        dropdownParent: $('#createDiscountModal'),
-        width: '100%',
-        allowClear: true,
-        placeholder: 'اختر عنصرًا'
-      });
-  });
 
   function updateFields() {
     const selectedType = typeSelect.value;
@@ -191,20 +170,11 @@ document.addEventListener("DOMContentLoaded", function () {
       el.disabled = true;
     });
 
-    if (selected) {
-      const selectedEl = document.getElementById(`${selected}Select`);
-      if (selectedEl) {
-        selectedEl.classList.remove('d-none');
-        selectedEl.disabled = false;
-      }
+    const selectedEl = document.getElementById(`${selected}Select`);
+    if (selectedEl) {
+      selectedEl.classList.remove('d-none');
+      selectedEl.disabled = false;
     }
-
-    // ✅ إعادة تهيئة Select2 للعنصر المفعّل
-    $('#createDiscountModal .target-select:visible').select2({
-      dropdownParent: $('#createDiscountModal'),
-      width: '100%',
-      allowClear: true
-    });
   }
 
   function updateGiftTargetSelect() {
@@ -214,24 +184,15 @@ document.addEventListener("DOMContentLoaded", function () {
     document.querySelectorAll('.gift-target-select').forEach(el => {
       el.classList.add('d-none');
       el.disabled = true;
-      el.name = '';
+      el.name = ''; // Clear name to prevent submission
     });
 
-    if (selected) {
-      const selectedEl = document.getElementById(`gift${capitalize(selected)}Select`);
-      if (selectedEl) {
-        selectedEl.classList.remove('d-none');
-        selectedEl.disabled = false;
-        selectedEl.name = 'gift_targets[0][id]';
-      }
+    const selectedEl = document.getElementById(`gift${capitalize(selected)}Select`);
+    if (selectedEl) {
+      selectedEl.classList.remove('d-none');
+      selectedEl.disabled = false;
+      selectedEl.name = 'gift_targets[0][id]'; // Set name only for the active one
     }
-
-    // ✅ إعادة تهيئة Select2 للعنصر المفعّل
-    $('#createDiscountModal .gift-target-select:visible').select2({
-      dropdownParent: $('#createDiscountModal'),
-      width: '100%',
-      allowClear: true
-    });
 
     const giftHiddenInput = document.querySelector('input[name="gift_targets[0][is_gift]"]');
     if (giftHiddenInput) {

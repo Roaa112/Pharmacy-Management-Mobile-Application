@@ -13,12 +13,12 @@ class UpdateProductRequest extends FormRequest
             'name_ar' => 'required|string|max:255',
             'description_en' => 'nullable|string',
             'description_ar' => 'nullable|string',
-       
-            'sizes' => 'required|array|min:1',
-            'sizes.*.size' => 'required|string',
-            'sizes.*.price' => 'required|numeric',
-            'sizes.*.stock' => 'required|integer',
-            
+
+            'sizes' => 'nullable|array|min:1',
+            'sizes.*.size' => 'nullable|string',
+            'sizes.*.price' => 'nullable|numeric',
+            'sizes.*.stock' => 'nullable|integer',
+
             'rate' => 'nullable|numeric|between:0,5',
             'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
 
