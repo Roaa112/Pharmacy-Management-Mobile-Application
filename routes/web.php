@@ -3,6 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use App\Modules\Brand\BrandController;
 use App\Modules\Orders\OrderController;
+use App\Modules\Points\PointController;
+use App\Http\Controllers\HomeController;
 use App\Modules\Banner\BannerController;
 use App\Modules\Coupon\CouponsController;
 use App\Modules\Contact\ContactController;
@@ -15,9 +17,8 @@ use App\Modules\OpeningAd\OpeningAdController;
 use App\Modules\Orders\ReturnRequestController;
 use App\Modules\HealthIssue\HealthIssueController;
 use App\Modules\DeliveryPrice\DeliveryPriceController;
-use App\Modules\ContactMessage\ContactMassageController;
 use  App\Modules\HealthService\HealthServiceController;
-use App\Modules\Points\PointController;
+use App\Modules\ContactMessage\ContactMassageController;
 
 Route::get('/', function () {
     return redirect('/dashboard');
@@ -27,9 +28,7 @@ Route::get('/product/{id}', function ($id) {
     $deepLink = "elkawther://product/{$id}";
     return redirect($deepLink);
 });
-Route::get('/dashboard', function () {
-    return view('dashboard.index');
-})->middleware('auth:admin');
+Route::get('/dashboard',[HomeController::class,'home'])->middleware('auth:admin');
 Route::prefix('dashboard/health-results')->middleware('auth:admin')->group(function () {
     Route::get('/body-weight', [HealthServiceController::class, 'bodyWeight'])->name('admin.health.body_weight');
     Route::get('/blood-sugar', [HealthServiceController::class, 'bloodSugar'])->name('admin.health.blood_sugar');
