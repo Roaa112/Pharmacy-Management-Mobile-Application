@@ -76,8 +76,8 @@ Route::middleware([\App\Http\Middleware\SetLocaleLang::class])
     Route::get('openingAd', [ApiOpeningAdController::class, 'listAllOpeningAds']);
  Route::get('categories/{category}/best-selling-products', [ApiCategoryController::class, 'bestSellingProducts']);
           Route::get('categories/{category_id}/new-arrival-products', [ApiCategoryController::class, 'newArrivalProducts']);
-          
-          
+
+
                  Route::get('healthissues/{id}/best-selling-products', [ApiHealthIssueController::class, 'bestSellingProductsByHealthIssue']);
           Route::get('healthissues/{id}/new-arrival-products', [ApiHealthIssueController::class, 'newArrivalProductsByHealthIssue']);
             Route::get('brands/{id}/best-selling-products', [ApiBrandController::class, 'bestSellingProductsByBrand']);
@@ -158,8 +158,8 @@ Route::middleware('auth:sanctum')->prefix('user/health')->group(function () {
  Route::get('/blood-pressure', [HealthServiceController::class, 'getBloodPressure']);
     Route::get('/blood-sugar', [HealthServiceController::class, 'getBloodSugar']);
     Route::get('/weight', [HealthServiceController::class, 'getWeight']);
-  
-  
+
+
     Route::post('/body-weight', [HealthServiceController::class, 'storeBodyWeight']);
 
     Route::post('/ovulation', [HealthServiceController::class, 'storeOvulation']);
@@ -173,6 +173,8 @@ Route::middleware('auth:sanctum')->prefix('user/health')->group(function () {
     Route::post('/calculatePregnancy', [HealthServiceController::class, 'storePregnancy']);
 
     Route::post('/child', [HealthServiceController::class, 'storeVaccination']);
+
+    Route::delete('/child/{id}', [HealthServiceController::class, 'destroychild']);
     Route::get('/CurrentPregnancyStage', [HealthServiceController::class, 'getCurrentPregnancyStage']);
 
 

@@ -53,6 +53,10 @@
                         <label>Zain Cash Number</label>
                         <input type="text" name="zaincash" class="form-control">
                     </div>
+                     <div class="form-group">
+                        <label>Key Card Number</label>
+                        <input type="text" name="keycard" class="form-control">
+                    </div>
                     <div class="form-group">
                         <label>Map Location URL</label>
                         <input type="url" name="map_location_url" class="form-control">

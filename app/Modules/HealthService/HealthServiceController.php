@@ -26,7 +26,7 @@ class HealthServiceController extends Controller
     {
         $this->healthService = $healthService;
     }
-  public function bodyWeight(Request $request)
+    public function bodyWeight(Request $request)
     {
         $search = $request->input('search');
         $query = BodyWeightResult::with('user:id,name');
@@ -49,7 +49,7 @@ class HealthServiceController extends Controller
             $query->whereHas('user', fn($q) => $q->where('name', 'like', "%{$search}%"));
         }
 
-      $bloodSugars = $query->latest()->paginate(20);
+        $bloodSugars = $query->latest()->paginate(20);
 
         return view('dashboard.health-results.blood-sugar', compact('bloodSugars'));
     }
@@ -63,7 +63,7 @@ class HealthServiceController extends Controller
             $query->whereHas('user', fn($q) => $q->where('name', 'like', "%{$search}%"));
         }
 
-       $bloodPressures = $query->latest()->paginate(20);
+        $bloodPressures = $query->latest()->paginate(20);
 
         return view('dashboard.health-results.blood-pressure', compact('bloodPressures'));
     }
@@ -75,7 +75,7 @@ class HealthServiceController extends Controller
             ->select('ovulation_results.*')
             ->join(DB::raw('(SELECT user_id, MAX(id) AS latest_id FROM ovulation_results GROUP BY user_id) latest'), 'ovulation_results.id', '=', 'latest.latest_id')
             ->when($search, fn($q) => $q->whereHas('user', fn($u) => $u->where('name', 'like', "%{$search}%")))
-           ->paginate(20);
+            ->paginate(20);
 
         return view('dashboard.health-results.ovulation', compact('ovulations'));
     }
@@ -103,7 +103,7 @@ class HealthServiceController extends Controller
             $query->whereHas('user', fn($q) => $q->where('name', 'like', "%{$search}%"));
         }
 
-         $children = $query->latest()->paginate(20);
+        $children = $query->latest()->paginate(20);
 
         return view('dashboard.health-results.children', compact('children'));
     }
@@ -153,7 +153,7 @@ class HealthServiceController extends Controller
             ->first();
 
         if (!$result) {
-            return ['message' => 'محتاج تدخل بيانات الدورة أل مرة'];
+            return ['message' => 'محتاج تدخل بيانات الدورة لأول مرة'];
         }
 
         $startDate = $result->start_day_of_cycle->copy();
@@ -212,14 +212,14 @@ class HealthServiceController extends Controller
                             $phase = 'خصوبة متوسطة';
                             $chance = '15%';
                         } elseif ($daysFromOvulation == -5) {
-                            $phase = 'خصوبة منفضة';
+                            $phase = 'خصوبة منخفضة';
                             $chance = '10%';
                         } elseif (in_array($daysFromOvulation, [1, 2])) {
                             $phase = 'نهاية التبويض';
                             $chance = '5%';
                         }
                     } elseif ($day->greaterThan($fertileEnd)) {
-                        $phase = 'ما بعد التبيض';
+                        $phase = 'ما بعد التبويض';
                     }
 
                     $allDays[] = [
@@ -237,7 +237,7 @@ class HealthServiceController extends Controller
         }
 
         return [
-            'message' => 'تم حساب السيل',
+            'message' => 'تم حساب الدورة ',
             'months' => collect($allDays)->groupBy('month'),
             'today' => [
                 'date' => $today->toDateString(),
@@ -408,7 +408,7 @@ class HealthServiceController extends Controller
     {
         $request->validate([
             'child_name' => 'required|string',
-            'gender' => 'required|in:كر,أنثى',
+            'gender' => 'required|in:ذكر,أنثى',
             'birth_date' => 'required|date',
         ]);
 
@@ -425,7 +425,7 @@ class HealthServiceController extends Controller
         $this->generateDefaultVaccines($child);
 
         return response()->json([
-            'message' => 'تم إنشاء الطفل وجدل التطيمات بنجاح',
+            'message' => 'تم إنشاء الطفل وجدول التطعيمات بنجاح',
             'child' => $child->load('vaccines'),
         ]);
     }
@@ -439,49 +439,50 @@ class HealthServiceController extends Controller
             [
                 'name' => 'لقاح عند الولادة',
                 'offset' => '0 days',
-                'description' => 'لقاح التهاب الكب افيروسي B (اجرعة لصفرية) خلا أول 24 ساعة من اللادة.'
+                'description' => 'لقاح التهاب الكبد الفيروسي B (الجرعة الصفرية) خلال أول 24 ساعة من الولادة.'
             ],
             [
-                'name' => 'لقاح الأسبوع الأل',
+                'name' => 'لقاح الأسبوع الأول',
                 'offset' => '7 days',
-                'description' => 'لقاح شلل الأطفل الفموي (الجعة لصفرية) + لقا اسل BCG.'
+                'description' => 'لقاح شلل الأطفال الفموي (الجرعة الصفرية) + لقاح السل (BCG).'
             ],
             [
-                'name' => 'لقاح عمر شهرن',
+                'name' => 'لقاح عمر شهرين',
                 'offset' => '2 months',
-                'description' => 'لجرعة اأول م: شل الأطفل الفمو، شلل الأطفال العضلي، الخماسي (الدتييا، اكزز، السعل الديي الكبد B، المستدة النزلية)، لكورات الرئوية، روتا.'
+                'description' => 'الجرعة الأولى من: شلل الأطفال الفموي، شلل الأطفال العضلي، الخماسي (الدفتيريا، الكزاز، السعال الديكي، التهاب الكبد B، المستدمية النزلية)، المكورات الرئوية، والروتا.'
             ],
             [
                 'name' => 'لقاح عمر 4 أشهر',
                 'offset' => '4 months',
-                'description' => 'الجرعة الثاني من: شلل الأطفال افموي، شلل الأطف لعضلي، الخماسي، لمكورات الرئوية، الروتا.'
+                'description' => 'الجرعة الثانية من: شلل الأطفال الفموي، شلل الأطفال العضلي، الخماسي، المكورات الرئوية، والروتا.'
             ],
             [
-                'name' => 'لقاح عمر 6 اشه',
+                'name' => 'لقاح عمر 6 أشهر',
                 'offset' => '6 months',
-                'description' => 'الجرعة اللثة من: شلل الأطا الفموي، شلل اأطفال العضلي، لخاسي، الروتا.'
+                'description' => 'الجرعة الثالثة من: شلل الأطفال الفموي، شلل الأطفال العضلي، الخماسي، والروتا.'
             ],
             [
                 'name' => 'لقاح عمر 9 أشهر',
                 'offset' => '9 months',
-                'description' => 'جرعة منشطة: شلل الأطفال الفموي + لقاح الصبة.'
+                'description' => 'جرعة منشطة من شلل الأطفال الفموي + لقاح الحصبة.'
             ],
             [
-                'name' => 'لقاح عمر 12 شه',
+                'name' => 'لقاح عمر 12 شهرًا',
                 'offset' => '12 months',
-                'description' => 'لقاح الحصبة امختلطة (حصبة حصبة ألمانية، نكاف MMR) + الجعة المشطة الأولى للمكوات الرئوية.'
+                'description' => 'لقاح الحصبة المختلطة (حصبة، حصبة ألمانية، نكاف - MMR) + الجرعة المنشطة الأولى من المكورات الرئوية.'
             ],
             [
-                'name' => 'لقاح عم 18 شهر',
+                'name' => 'لقاح عمر 18 شهرًا',
                 'offset' => '18 months',
-                'description' => 'رعة نشطة من: شلل الأطال الفموي، شلل الأفال العلي، اثلاث (DTaP)، الجرع لمنشطة الثانية لمكورات الرئوية.'
+                'description' => 'جرعة منشطة من: شلل الأطفال الفموي، شلل الأطفال العضلي، الثلاثي (DTaP)، والجرعة المنشطة الثانية من المكورات الرئوية.'
             ],
             [
                 'name' => 'لقاح عمر 4-6 سنوات',
                 'offset' => '4 years',
-                'description' => 'جرعة مشطة خيرة: شلل الأفال الفمي، شلل الأطفل العضل، الثلاث (DTaP).'
+                'description' => 'الجرعة المنشطة الأخيرة من: شلل الأطفال الفموي، شلل الأطفال العضلي، والثلاثي (DTaP).'
             ],
         ];
+
 
         foreach ($defaultVaccines as $vaccine) {
             Vaccine::create([
@@ -512,7 +513,7 @@ class HealthServiceController extends Controller
             });
 
         return response()->json([
-            'message' => 'تم جلب يانات الأفال واطعيمات',
+            'message' => 'تم جلب بيانات الأطفال والتطعيمات',
             'children' => $children,
         ]);
     }
@@ -527,8 +528,26 @@ class HealthServiceController extends Controller
         ]);
 
         return response()->json([
-            'message' => 'تم تحديث حالة لتطيم',
+            'message' => 'تم تحديث حالة التطعيم',
             'vaccine' => $vaccine,
         ]);
+    }
+
+
+    public function destroychild($id)
+    {
+        $child = Child::find($id);
+
+        if (!$child) {
+            return response()->json([
+                'message' => 'الطفل غير موجود'
+            ], 404);
+        }
+
+        $child->delete(); // Cascades to vaccines automatically
+
+        return response()->json([
+            'message' => 'تم حذف الطفل بنجاح'
+        ], 200);
     }
 }

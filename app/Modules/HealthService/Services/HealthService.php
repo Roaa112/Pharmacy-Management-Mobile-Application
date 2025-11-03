@@ -81,7 +81,7 @@ public function calculateOvulation($userId, array $validated)
 
     for ($i = 0; $i < $cycleLength; $i++) {
         $day = $startDate->copy()->addDays($i);
-        $phase = 'غير خصبة';
+        $phase = 'غير مخصبة';
         $chance = '0%';
 
   if ($i < $periodLength) {
@@ -184,22 +184,22 @@ $nextPeriodStart = $startDate->copy()->addDays($cycleLength);
     $description = '';
 
     if ($bmi < 18.5) {
-        $status = 'نقص في اوزن';
-        $description = 'مؤشر كتل الجسم الخاص بك أل من 18.5، وهذا يعن أن وزنك أقل من الطبيعي. يُفضل مراجة طبيب.';
+        $status = 'نقص في الوزن';
+        $description = 'مؤشر كتل الجسم الخاص بك أل من 18.5، وهذا يعني أن وزنك أقل من الطبيعي. يُفضل مراجعة طبيب.';
     } elseif ($bmi < 25) {
         $status = 'وزن طبيعي';
         $description = 'وزنك ضمن النطاق الصحي. اتسمر في الحفاظ على أسلوب حياة متوازن.';
     } elseif ($bmi < 30) {
-        $status = 'زيادة في الون';
-        $description = 'مؤشر كتلة الجسم بي 25 و30 يشير إلى زيادة في الوزن،  قد يؤدي لمشاكل صحية لاحقًا.';
+        $status = 'زيادة في الوزن';
+        $description = 'مؤشر كتلة الجسم بين 25 و30 يشير إلى زيادة في الوزن،  قد يؤدي لمشاكل صحية لاحقًا.';
     } elseif ($bmi < 35) {
-        $status = 'سمنة من الدرجة اولى';
+        $status = 'سمنة من الدرجة الاولى';
         $description = 'وزنك يُصنف كسمنة من الدرجة الأولى. يُنصح باتباع نظام غذائي صحي.';
     } elseif ($bmi < 40) {
         $status = 'سمنة من الدرجة الثانية';
-        $description = 'سمنة متوسطة، ُفضل مراجعة مختص تغذية واتباع خطة صحية.';
+        $description = 'سمنة متوسطة، ُيفضل مراجعة مختص تغذية واتباع خطة صحية.';
     } else {
-        $status = 'سمنة من الدرج الثالثة';
+        $status = 'سمنة من الدرجة الثالثة';
         $description = 'سمنة مفرطة. يُنصح بمراجعة الطبيب لاتخاذ خطوات تحسين صحتك.';
     }
 
@@ -612,5 +612,5 @@ $monthInfo = "اليوم {$dayInWeek} من الأسبوع {$weekInMonth} في ا
     return $result;
 }
 
- 
+
 }

@@ -78,7 +78,7 @@
                         <ul class="list-unstyled">
                             @foreach($order->items as $item)
                                 <li class="mb-2">
-                                    <strong>{{ $item->product->name ?? 'منتج محوف' }}</strong> (x{{ $item->quantity }})<br>
+                                    <strong>{{ $item->product->name ?? 'منتج غير معروف ' }}</strong> (x{{ $item->quantity }})<br>
                                     <small>
 
                                          مقاس: {{ $item->size->size ?? 'غير متوفر' }}<br>
@@ -112,9 +112,9 @@
                             @method('PUT')
                             <select name="status" onchange="this.form.submit()" class="form-control form-control-sm">
                                 <option disabled selected>-- اختر --</option>
-                                <option value="pending" {{ $order->status === 'pending' ? 'selected' : '' }}>قيد المراجعة</option>
-                                <option value="confirmed" {{ $order->status === 'confirmed' ? 'selected' : '' }}>تم اأكيد</option>
-                                <option value="canceled" {{ $order->status === 'canceled' ? 'selected' : '' }}>لغي</option>
+                                <option value="pending" {{ $order->status === 'pending' ? 'selected' : '' }}>تم تاكيد الطلب  </option>
+                                <option value="confirmed" {{ $order->status === 'confirmed' ? 'selected' : '' }}> تم شحن الطلب </option>
+                                <option value="canceled" {{ $order->status === 'canceled' ? 'selected' : '' }}>تم الغاء الطلب </option>
                                 <option value="completed" {{ $order->status === 'completed' ? 'selected' : '' }}>تم التوصيل</option>
                             </select>
                         </form>

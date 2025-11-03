@@ -54,6 +54,10 @@
                         <label>Zain Cash Number</label>
                         <input type="text" name="zaincash" class="form-control" value="{{ old('zaincash', $setting->zaincash) }}">
                     </div>
+                     <div class="form-group">
+                        <label>Key Card Number</label>
+                        <input type="text" name="keycard" class="form-control" value="{{ old('keycard', $setting->keycard) }}">
+                    </div>
 
 
                     <div class="form-group">

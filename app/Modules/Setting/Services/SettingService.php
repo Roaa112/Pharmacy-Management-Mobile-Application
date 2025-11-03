@@ -67,6 +67,7 @@ class SettingService
         'spend_x' => $request['spend_x'],
         'get_y' => $request['get_y'],
         'zaincash' => $request['zaincash'],
+        'keycard' => $request['keycard'],
         'points_validity_days' => $request['points_validity_days'],
     ];
 

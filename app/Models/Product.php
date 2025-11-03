@@ -185,13 +185,11 @@ public function getFinalPriceAfterDiscount(Product $product, ProductSize $size)
             $finalPrice = $originalPrice;
 
             if ($discount) {
-                if ($discount['type'] === 'fixed' || $discount['type'] === 'flash') {
-                    $finalPrice = max(0, $originalPrice - $discount['value']);
-                } elseif ($discount['type'] === 'percent') {
+                if ($discount['type'] === 'flash') {
                     $finalPrice = round($originalPrice * (1 - $discount['value'] / 100), 2);
-                }
-            }
 
+            }
+        }
             return [
               'id'=>$size->id,
                 'size' => $size->size,

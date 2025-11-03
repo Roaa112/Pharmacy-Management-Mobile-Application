@@ -24,6 +24,7 @@ class StoreSettingRequest extends FormRequest
             'spend_x' => ['nullable'],
             'get_y' => ['nullable'],
             'zaincash' => ['nullable', 'string'],
+            'keycard' => ['nullable', 'string'],
             'points_validity_days' => ['nullable'],
         ];
     }

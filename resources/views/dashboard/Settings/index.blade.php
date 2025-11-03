@@ -26,6 +26,7 @@
                         <th>YouTube</th>
                         <th>Phone</th>
                         <th>Zain Cash Number</th>
+                        <th>key Card Number</th>
                         <th>Map Location</th>
 
                         <th>Buy By value</th>
@@ -47,6 +48,7 @@
                             <td>{{ $setting->youtube }}</td>
                             <td>{{ $setting->phone_number }}</td>
                             <td>{{ $setting->zaincash }}</td>
+                            <td>{{ $setting->keycard }}</td>
                             <td>
                                 @if ($setting->map_location_url)
                                     <a href="{{ $setting->map_location_url }}" target="_blank">View Map</a>
@@ -69,6 +71,7 @@
                                     data-map_location_url="{{ $setting->map_location_url }}"
                                     data-spend_x="{{ $setting->spend_x }}" data-get_y="{{ $setting->get_y }}"
                                     data-zaincash="{{ $setting->zaincash }}"
+                                    data-keycard="{{ $setting->keycard }}"
                                       data-points_validity_days="{{ $setting->points_validity_days }}">
                                     Edit
                                 </button>

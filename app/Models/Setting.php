@@ -23,6 +23,7 @@ class Setting extends Model
         'spend_x',
         'get_y',
         'zaincash',
+        'keycard',
         'points_validity_days',
     ];
 
