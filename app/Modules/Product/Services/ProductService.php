@@ -294,59 +294,82 @@ class ProductService
 
     // top descount
     public function getTopDiscountProducts(Request $request): array
-    {
-        $limit = $request->get('limit', 10);
-        $offset = $request->get('offset', 0);
-        $sortOrder = strtoupper($request->get('sort', 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
-        $sortBy = $request->get('sortBy', 'id');
-        // 1. Get highest discount values
-        $maxPercentValue = DB::table('discount_rules')
-            ->where('discount_type', 'percent')
-            ->where('starts_at', '<=', now())
-            ->where('ends_at', '>=', now())
-            ->max('discount_value');
+{
+    $limit = $request->get('limit', 10);
+    $offset = $request->get('offset', 0);
+    $sortOrder = strtoupper($request->get('sort', 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
+    $sortBy = $request->get('sortBy', 'id');
 
-        $maxFixedValue = DB::table('discount_rules')
-            ->where('discount_type', 'fixed')
-            ->where('starts_at', '<=', now())
-            ->where('ends_at', '>=', now())
-            ->max('discount_value');
+    // 1. Get highest discount values
+    $maxPercentValue = DB::table('discount_rules')
+        ->where('discount_type', 'percent')
+        ->where('starts_at', '<=', now())
+        ->where('ends_at', '>=', now())
+        ->max('discount_value');
 
-        // 2. Get all rules with highest discount values
-        $topPercentRules = DB::table('discount_rules')
-            ->where('discount_type', 'percent')
-            ->where('starts_at', '<=', now())
-            ->where('ends_at', '>=', now())
-            ->where('discount_value', $maxPercentValue)
-            ->get();
+    $maxFixedValue = DB::table('discount_rules')
+        ->where('discount_type', 'fixed')
+        ->where('starts_at', '<=', now())
+        ->where('ends_at', '>=', now())
+        ->max('discount_value');
 
-        $topFixedRules = DB::table('discount_rules')
-            ->where('discount_type', 'fixed')
-            ->where('starts_at', '<=', now())
-            ->where('ends_at', '>=', now())
-            ->where('discount_value', $maxFixedValue)
-            ->get();
+    // 2. Get all rules with highest discount values
+    $topPercentRules = DB::table('discount_rules')
+        ->where('discount_type', 'percent')
+        ->where('starts_at', '<=', now())
+        ->where('ends_at', '>=', now())
+        ->where('discount_value', $maxPercentValue)
+        ->get();
 
-        // 3. Fetch products for all rules
-        $productsPercent = collect();
-        foreach ($topPercentRules as $rule) {
-            $productsPercent = $productsPercent->merge(
-                $this->getProductsBytopDiscountRule($rule->id)
-            );
-        }
-        $productsPercent = $productsPercent->unique('id');
+    $topFixedRules = DB::table('discount_rules')
+        ->where('discount_type', 'fixed')
+        ->where('starts_at', '<=', now())
+        ->where('ends_at', '>=', now())
+        ->where('discount_value', $maxFixedValue)
+        ->get();
 
-        $productsFixed = collect();
-        foreach ($topFixedRules as $rule) {
-            $productsFixed = $productsFixed->merge(
-                $this->getProductsBytopDiscountRule($rule->id)
-            );
-        }
-        $productsFixed = $productsFixed->unique('id');
-        $paginatedPercent = $productsPercent->slice($offset, $limit)->values();
-        $paginatedFixed = $productsFixed->slice($offset, $limit)->values();
-        // 4. Format response
-        $transform = fn($product) => [
+    // 3. Fetch products for all rules
+    $productsPercent = collect();
+    foreach ($topPercentRules as $rule) {
+        $productsPercent = $productsPercent->merge(
+            $this->getProductsBytopDiscountRule($rule->id)
+        );
+    }
+    $productsPercent = $productsPercent->unique('id');
+
+    $productsFixed = collect();
+    foreach ($topFixedRules as $rule) {
+        $productsFixed = $productsFixed->merge(
+            $this->getProductsBytopDiscountRule($rule->id)
+        );
+    }
+    $productsFixed = $productsFixed->unique('id');
+
+    $paginatedPercent = $productsPercent->slice($offset, $limit)->values();
+    $paginatedFixed = $productsFixed->slice($offset, $limit)->values();
+
+    // 4. Transform each product
+    $transform = function ($product) use ($maxPercentValue, $maxFixedValue) {
+        $discountValue = $product->discount_type === 'percent' ? $maxPercentValue : $maxFixedValue;
+
+        // inject discount details inside available_sizes
+        $sizesWithDiscount = collect($product->available_sizes)->map(function ($size) use ($product, $discountValue) {
+            $priceBefore = (float) $size['original_price'];
+
+            if ($product->discount_type === 'percent') {
+                $priceAfter = $priceBefore - ($priceBefore * ($discountValue / 100));
+            } else {
+                $priceAfter = max(0, $priceBefore - $discountValue);
+            }
+
+            return array_merge($size, [
+                'discount_type' => $product->discount_type,
+                'discount_value' => $discountValue,
+                'price_after_discount' => round($priceAfter, 2),
+            ]);
+        });
+
+        return [
             'id' => $product->id,
             'name' => $product->name,
             'description' => $product->description,
@@ -357,37 +380,38 @@ class ProductService
             'price_before_discount' => $product->available_sizes->first()['original_price'] ?? 0,
             'price_after_discount' => $product->final_price,
             'discount_type' => $product->discount_type,
-            'available_sizes' => $product->available_sizes,
+            'available_sizes' => $sizesWithDiscount,
             'sizes' => $product->sizes,
             'is_favorite' => $product->is_favorite,
             'rate' => $product->rate,
             'ratings_count' => $product->ratings_count,
             'average_rating' => $product->average_rating,
         ];
+    };
 
+    return [
+        'data' => [
+            'top_percent_discount' => [
+                'discount_value' => $maxPercentValue,
+                'products' => $paginatedPercent->map($transform),
+                'total' => $productsPercent->count(),
+            ],
+            'top_fixed_discount' => [
+                'discount_value' => $maxFixedValue,
+                'products' => $paginatedFixed->map($transform),
+                'total' => $productsFixed->count(),
+            ],
+        ],
+        'meta' => [
+            'limit' => (int) $limit,
+            'offset' => (int) $offset,
+            'sort' => $sortOrder,
+            'sortBy' => $sortBy,
+        ],
+        'count' => $paginatedPercent->count() + $paginatedFixed->count(),
+    ];
+}
 
-        return [
-            'data' => [
-                'top_percent_discount' => [
-                    'discount_value' => $maxPercentValue,
-                    'products' => $paginatedPercent->map($transform),
-                    'total' => $productsPercent->count(),
-                ],
-                'top_fixed_discount' => [
-                    'discount_value' => $maxFixedValue,
-                    'products' => $paginatedFixed->map($transform),
-                    'total' => $productsFixed->count(),
-                ],
-            ],
-            'meta' => [
-                'limit' => (int) $limit,
-                'offset' => (int) $offset,
-                'sort' => $sortOrder,
-                'sortBy' => $sortBy,
-            ],
-            'count' => $paginatedPercent->count() + $paginatedFixed->count(),
-        ];
-    }
 
     private function getProductsBytopDiscountRule($ruleId)
     {
@@ -417,101 +441,208 @@ class ProductService
 
     // products on sale
 
+    // public function listAllProductsOnSale(Request $request): array
+    // {
+    //     $limit = $request->get('limit', 10);
+    //     $offset = $request->get('offset', 0);
+    //     $sortOrder = strtoupper($request->get('sort', 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
+    //     $sortBy = $request->get('sortBy', 'id');
+    //     // 1. Get top percent and fixed discount rules (active only)
+    //     $topPercentRule = DB::table('discount_rules')
+    //         ->where('discount_type', 'percent')
+    //         ->where('starts_at', '<=', now())
+    //         ->where('ends_at', '>=', now())
+    //         ->orderByDesc('discount_value')
+    //         ->first();
+
+    //     $topFixedRule = DB::table('discount_rules')
+    //         ->where('discount_type', 'fixed')
+    //         ->where('starts_at', '<=', now())
+    //         ->where('ends_at', '>=', now())
+    //         ->orderByDesc('discount_value')
+    //         ->first();
+
+    //     // 2. Fetch products for each rule
+    //     $productsPercent = $topPercentRule ? $this->getProductsByDiscountRule($topPercentRule->id) : collect();
+    //     $productsFixed = $topFixedRule ? $this->getProductsByDiscountRule($topFixedRule->id) : collect();
+    //     $paginatedPercent = $productsPercent->slice($offset, $limit)->values();
+    //     $paginatedFixed = $productsFixed->slice($offset, $limit)->values();
+    //     // 3. Transform products to return format
+    //     $transform = fn($product) => [
+    //         'id' => $product->id,
+    //         'name' => $product->name,
+    //         'description' => $product->description,
+    //         'main_image' => $product->image_url,
+    //         'images' => $product->images,
+    //         'brand' => $product->brand->name ?? null,
+    //         'category' => $product->category->name ?? null,
+    //         'price_before_discount' => $product->available_sizes->first()['original_price'] ?? 0,
+    //         'price_after_discount' => $product->final_price,
+    //         'discount_type' => $product->discount_type,
+    //         'is_favorite' => $product->is_favorite,
+    //         'rate' => $product->rate,
+    //         'ratings_count' => $product->ratings_count,
+    //         'available_sizes' => $product->available_sizes,
+    //         'sizes' => $product->sizes,
+    //         'average_rating' => $product->average_rating,
+    //     ];
+
+
+    //     return [
+    //         'data' => [
+    //             'top_percent_discount' => [
+    //                 'discount_value' => $topPercentRule->discount_value ?? null,
+    //                 'products' => $paginatedPercent,
+    //                 'total' => $productsPercent->count(),
+    //             ],
+    //             'top_fixed_discount' => [
+    //                 'discount_value' => $topFixedRule->discount_value ?? null,
+    //                 'products' => $paginatedFixed,
+    //                 'total' => $productsFixed->count(),
+    //             ],
+    //         ],
+    //         'meta' => [
+    //             'limit' => $limit,
+    //             'offset' => $offset,
+    //             'sort' => $sortOrder,
+    //             'sortBy' => $sortBy,
+    //         ],
+    //         'count' => $paginatedPercent->count() + $paginatedFixed->count(),
+    //     ];
+    // }
+    // private function getProductsByDiscountRule($ruleId)
+    // {
+    //     $targets = DB::table('discount_rule_targets')
+    //         ->where('discount_rule_id', $ruleId)
+    //         ->get();
+
+    //     $productIds = collect();
+
+    //     foreach ($targets as $target) {
+    //         if ($target->target_type === 'product') {
+    //             $productIds->push($target->target_id);
+    //         } elseif ($target->target_type === 'brand') {
+    //             $productIds = $productIds->merge(
+    //                 Product::where('brand_id', $target->target_id)->pluck('id')
+    //             );
+    //         } elseif ($target->target_type === 'category') {
+    //             $productIds = $productIds->merge(
+    //                 Product::where('category_id', $target->target_id)->pluck('id')
+    //             );
+    //         }
+    //     }
+
+    //     return Product::with(['sizes', 'productImages', 'brand', 'category'])
+    //         ->whereIn('id', $productIds->unique())
+    //         ->get();
+    // }
+
     public function listAllProductsOnSale(Request $request): array
-    {
-        $limit = $request->get('limit', 10);
-        $offset = $request->get('offset', 0);
-        $sortOrder = strtoupper($request->get('sort', 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
-        $sortBy = $request->get('sortBy', 'id');
-        // 1. Get top percent and fixed discount rules (active only)
-        $topPercentRule = DB::table('discount_rules')
-            ->where('discount_type', 'percent')
-            ->where('starts_at', '<=', now())
-            ->where('ends_at', '>=', now())
-            ->orderByDesc('discount_value')
-            ->first();
+{
+    $limit = $request->get('limit', 10);
+    $offset = $request->get('offset', 0);
+    $sortOrder = strtoupper($request->get('sort', 'ASC')) === 'DESC' ? 'DESC' : 'ASC';
+    $sortBy = $request->get('sortBy', 'id');
 
-        $topFixedRule = DB::table('discount_rules')
-            ->where('discount_type', 'fixed')
-            ->where('starts_at', '<=', now())
-            ->where('ends_at', '>=', now())
-            ->orderByDesc('discount_value')
-            ->first();
+    // 1. Get top percent and fixed discount rules (active only)
+    $topPercentRule = DB::table('discount_rules')
+        ->where('discount_type', 'percent')
+        ->where('starts_at', '<=', now())
+        ->where('ends_at', '>=', now())
+        ->orderByDesc('discount_value')
+        ->first();
 
-        // 2. Fetch products for each rule
-        $productsPercent = $topPercentRule ? $this->getProductsByDiscountRule($topPercentRule->id) : collect();
-        $productsFixed = $topFixedRule ? $this->getProductsByDiscountRule($topFixedRule->id) : collect();
-        $paginatedPercent = $productsPercent->slice($offset, $limit)->values();
-        $paginatedFixed = $productsFixed->slice($offset, $limit)->values();
-        // 3. Transform products to return format
-        $transform = fn($product) => [
-            'id' => $product->id,
-            'name' => $product->name,
-            'description' => $product->description,
-            'main_image' => $product->image_url,
-            'images' => $product->images,
-            'brand' => $product->brand->name ?? null,
-            'category' => $product->category->name ?? null,
-            'price_before_discount' => $product->available_sizes->first()['original_price'] ?? 0,
-            'price_after_discount' => $product->final_price,
-            'discount_type' => $product->discount_type,
-            'is_favorite' => $product->is_favorite,
-            'rate' => $product->rate,
-            'ratings_count' => $product->ratings_count,
-            'available_sizes' => $product->available_sizes,
-            'sizes' => $product->sizes,
-            'average_rating' => $product->average_rating,
-        ];
+    $topFixedRule = DB::table('discount_rules')
+        ->where('discount_type', 'fixed')
+        ->where('starts_at', '<=', now())
+        ->where('ends_at', '>=', now())
+        ->orderByDesc('discount_value')
+        ->first();
 
+    // 2. Fetch products for each rule
+    $productsPercent = $topPercentRule ? $this->getProductsByDiscountRule($topPercentRule->id) : collect();
+    $productsFixed = $topFixedRule ? $this->getProductsByDiscountRule($topFixedRule->id) : collect();
 
-        return [
-            'data' => [
-                'top_percent_discount' => [
-                    'discount_value' => $topPercentRule->discount_value ?? null,
-                    'products' => $paginatedPercent,
-                    'total' => $productsPercent->count(),
-                ],
-                'top_fixed_discount' => [
-                    'discount_value' => $topFixedRule->discount_value ?? null,
-                    'products' => $paginatedFixed,
-                    'total' => $productsFixed->count(),
-                ],
+    // Apply sorting if needed
+    $productsPercent = $productsPercent->sortBy($sortBy, SORT_REGULAR, $sortOrder === 'DESC');
+    $productsFixed = $productsFixed->sortBy($sortBy, SORT_REGULAR, $sortOrder === 'DESC');
+
+    // Paginate
+    $paginatedPercent = $productsPercent->slice($offset, $limit)->values();
+    $paginatedFixed = $productsFixed->slice($offset, $limit)->values();
+
+    // 3. Transform products
+    $transform = fn($product) => [
+        'id' => $product->id,
+        'name' => $product->name,
+        'description' => $product->description,
+        'main_image' => $product->image_url,
+        'images' => $product->images,
+        'brand' => $product->brand->name ?? null,
+        'category' => $product->category->name ?? null,
+        'price_before_discount' => $product->available_sizes->first()['original_price'] ?? 0,
+        'price_after_discount' => $product->final_price,
+        'discount_type' => $product->discount_type,
+        'is_favorite' => $product->is_favorite,
+        'rate' => $product->rate,
+        'ratings_count' => $product->ratings_count,
+        'average_rating' => $product->average_rating,
+        'available_sizes' => $product->available_sizes,
+        'sizes' => $product->sizes,
+    ];
+
+    // 4. Format response
+    return [
+        'data' => [
+            'top_percent_discount' => [
+                'discount_value' => $topPercentRule->discount_value ?? null,
+                'products' => $paginatedPercent->map($transform),
+                'total' => $productsPercent->count(),
             ],
-            'meta' => [
-                'limit' => $limit,
-                'offset' => $offset,
-                'sort' => $sortOrder,
-                'sortBy' => $sortBy,
+            'top_fixed_discount' => [
+                'discount_value' => $topFixedRule->discount_value ?? null,
+                'products' => $paginatedFixed->map($transform),
+                'total' => $productsFixed->count(),
             ],
-            'count' => $paginatedPercent->count() + $paginatedFixed->count(),
-        ];
-    }
-    private function getProductsByDiscountRule($ruleId)
-    {
-        $targets = DB::table('discount_rule_targets')
-            ->where('discount_rule_id', $ruleId)
-            ->get();
+        ],
+        'meta' => [
+            'limit' => (int) $limit,
+            'offset' => (int) $offset,
+            'sort' => $sortOrder,
+            'sortBy' => $sortBy,
+        ],
+        'count' => $paginatedPercent->count() + $paginatedFixed->count(),
+    ];
+}
 
-        $productIds = collect();
 
-        foreach ($targets as $target) {
-            if ($target->target_type === 'product') {
-                $productIds->push($target->target_id);
-            } elseif ($target->target_type === 'brand') {
-                $productIds = $productIds->merge(
-                    Product::where('brand_id', $target->target_id)->pluck('id')
-                );
-            } elseif ($target->target_type === 'category') {
-                $productIds = $productIds->merge(
-                    Product::where('category_id', $target->target_id)->pluck('id')
-                );
-            }
+private function getProductsByDiscountRule($ruleId)
+{
+    $targets = DB::table('discount_rule_targets')
+        ->where('discount_rule_id', $ruleId)
+        ->get();
+
+    $productIds = collect();
+
+    foreach ($targets as $target) {
+        if ($target->target_type === 'product') {
+            $productIds->push($target->target_id);
+        } elseif ($target->target_type === 'brand') {
+            $productIds = $productIds->merge(
+                Product::where('brand_id', $target->target_id)->pluck('id')
+            );
+        } elseif ($target->target_type === 'category') {
+            $productIds = $productIds->merge(
+                Product::where('category_id', $target->target_id)->pluck('id')
+            );
         }
-
-        return Product::with(['sizes', 'productImages', 'brand', 'category'])
-            ->whereIn('id', $productIds->unique())
-            ->get();
     }
+
+    return Product::with(['sizes', 'productImages', 'brand', 'category'])
+        ->whereIn('id', $productIds->unique())
+        ->get();
+}
+
     // show product
     public function getProductById($id)
     {

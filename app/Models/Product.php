@@ -150,7 +150,7 @@ public function getFinalPriceAfterDiscount(Product $product, ProductSize $size)
         $discount = $this->getActiveDiscount();
         if ($discount) {
             if ($discount->discount_type === 'fixed') {
-                $discountedByRule = max(0, $price - $discount->discount_value);
+                $discountedByRule = round($price * (1 - $discount->discount_value / 100), 2);
             } elseif ($discount->discount_type === 'percent') {
                 $discountedByRule = round($price * (1 - $discount->discount_value / 100), 2);
             }
@@ -166,7 +166,7 @@ public function getFinalPriceAfterDiscount(Product $product, ProductSize $size)
             $end = $start->copy()->addHour();
 
             if (now()->between($start, $end)) {
-                $discountedByFlash = max(0, $price - $this->saleable->discount_value);
+$discountedByFlash = round($price * (1 - ($this->saleable->discount_value / 100)), 2);
             }
         }
 
@@ -174,30 +174,34 @@ public function getFinalPriceAfterDiscount(Product $product, ProductSize $size)
     }
 
 
-   public function getAvailableSizesAttribute()
+public function getAvailableSizesAttribute()
 {
     $discount = $this->getActiveFinalDiscount();
 
     return $this->sizes
-        ->filter(fn($size) => $size->stock > 0) // ✅ فلترة ال sizes اللي خزونها أكبر من صفر
+        ->filter(fn($size) => $size->stock > 0)
         ->map(function ($size) use ($discount) {
             $originalPrice = $size->price;
             $finalPrice = $originalPrice;
 
             if ($discount) {
-                if ($discount['type'] === 'flash') {
+                if (in_array($discount['type'], ['fixed'])) {
+                    // خصم ثابت أو خصم فلاش (قيمة ثابتة)
+                    $finalPrice = max(0, $originalPrice - $discount['value']);
+                } elseif (in_array($discount['type'], ['percent', 'flash'])) {
+                    // خصم نسبي (نسبة مئوية)
                     $finalPrice = round($originalPrice * (1 - $discount['value'] / 100), 2);
-
+                }
             }
-        }
+
             return [
-              'id'=>$size->id,
+                'id' => $size->id,
                 'size' => $size->size,
                 'original_price' => $originalPrice,
                 'price' => $finalPrice,
                 'stock' => $size->stock,
             ];
-        })->values(); // مهم عشان يرجع array ب index نظيف من 0
+        })->values();
 }
 
 

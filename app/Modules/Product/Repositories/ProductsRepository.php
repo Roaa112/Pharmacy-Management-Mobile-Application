@@ -11,9 +11,8 @@ class ProductsRepository extends BaseRepository
     public function __construct(private Product $model)
     {
         parent::__construct($model);
-
     }
-      public function removeExtraImages(Product $product, array $imageIds): void
+    public function removeExtraImages(Product $product, array $imageIds): void
     {
 
         foreach ($imageIds as $id) {
@@ -25,7 +24,7 @@ class ProductsRepository extends BaseRepository
         }
     }
 
-  public function addExtraImages(Product $product, array $images)
+    public function addExtraImages(Product $product, array $images)
     {
 
         foreach ($images as $image) {
@@ -52,7 +51,7 @@ class ProductsRepository extends BaseRepository
     }
 
 
-     public function update($id, array $data): ?Product
+    public function update($id, array $data): ?Product
     {
         $product = $this->model->find($id);
 
@@ -71,45 +70,45 @@ class ProductsRepository extends BaseRepository
 
         return $this->model->create($attributes);
     }
- public function findAllBy($queryCriteria = [])
-{
-    $query = Product::with(['brand', 'category', 'healthIssues', 'productImages', 'sizes']);
+    public function findAllBy($queryCriteria = [])
+    {
+        $query = Product::with(['brand', 'category', 'healthIssues', 'productImages', 'sizes']);
 
-    // ✅ تطبيق الفلاتر
-    if (!empty($queryCriteria['filters'])) {
-        foreach ($queryCriteria['filters'] as $filter) {
-            $query->where(
-                $filter['column'],
-                $filter['operator'],
-                $filter['value']
-            );
+        // ✅ تطبيق الفلاتر
+        if (!empty($queryCriteria['filters'])) {
+            foreach ($queryCriteria['filters'] as $filter) {
+                $query->where(
+                    $filter['column'],
+                    $filter['operator'],
+                    $filter['value']
+                );
+            }
         }
+
+        // ✅ تطبيق الترتيب
+        $sortBy = $queryCriteria['sortBy'] ?? 'id';
+        $sort = $queryCriteria['sort'] ?? 'DESC';
+        $query->orderBy($sortBy, $sort);
+
+        // ✅ حساب العدد الكلي قبل limit
+        $totalCount = $query->count();
+
+        // ✅ تطبيق limit و offset
+        if (isset($queryCriteria['limit'])) {
+            $limit = $queryCriteria['limit'];
+            $offset = $queryCriteria['offset'] ?? 0;
+
+            $query->offset($offset)->limit($limit);
+            $products = $query->get();
+        } else {
+            $products = $query->get();
+        }
+
+        return [
+            'data' => $products,
+            'count' => $totalCount,
+        ];
     }
-
-    // ✅ تطبيق الترتيب
-    $sortBy = $queryCriteria['sortBy'] ?? 'id';
-    $sort = $queryCriteria['sort'] ?? 'DESC';
-    $query->orderBy($sortBy, $sort);
-
-    // ✅ حساب العدد الكلي قبل limit
-    $totalCount = $query->count();
-
-    // ✅ تطبيق limit و offset
-    if (isset($queryCriteria['limit'])) {
-        $limit = $queryCriteria['limit'];
-        $offset = $queryCriteria['offset'] ?? 0;
-
-        $query->offset($offset)->limit($limit);
-        $products = $query->get();
-    } else {
-        $products = $query->get();
-    }
-
-    return [
-        'data' => $products,
-        'count' => $totalCount,
-    ];
-}
 
 
     public function syncHealthIssues(Product $product, array $healthIssues): void
@@ -169,17 +168,17 @@ class ProductsRepository extends BaseRepository
             $searchTerm = $queryCriteria['search'];
             $query->where(function ($q) use ($searchTerm) {
                 $q->where('name_ar', 'like', '%' . $searchTerm . '%')  // البحث في الاسم اعرب
-                ->orWhere('name_en', 'like', '%' . $searchTerm . '%')  // البحث ف الاسم الإجليزي
-                ->orWhere('description_ar', 'like', '%' . $searchTerm . '%')  // ابحث في اصف اعربي
-                ->orWhere('description_en', 'like', '%' . $searchTerm . '%')  // الحث في الوصف الجليزي
-                ->orWhereHas('brand', function ($brandQuery) use ($searchTerm) {
-                    $brandQuery->where('name_ar', 'like', '%' . $searchTerm . '%')  // البحث ي الاسم لعربي للعامة التارية
-                                ->orWhere('name_en', 'like', '%' . $searchTerm . '%');  // البح ي ااسم الإنجليز للعامة التجاري
-                })
-                ->orWhereHas('category', function ($categoryQuery) use ($searchTerm) {
-                    $categoryQuery->where('name_ar', 'like', '%' . $searchTerm . '%')  // الحث في لاسم العربي للفئ
-                                    ->orWhere('name_en', 'like', '%' . $searchTerm . '%');  // البحث في الام الإنجلزي للفئة
-                });
+                    ->orWhere('name_en', 'like', '%' . $searchTerm . '%')  // البحث ف الاسم الإجليزي
+                    ->orWhere('description_ar', 'like', '%' . $searchTerm . '%')  // ابحث في اصف اعربي
+                    ->orWhere('description_en', 'like', '%' . $searchTerm . '%')  // الحث في الوصف الجليزي
+                    ->orWhereHas('brand', function ($brandQuery) use ($searchTerm) {
+                        $brandQuery->where('name_ar', 'like', '%' . $searchTerm . '%')  // البحث ي الاسم لعربي للعامة التارية
+                            ->orWhere('name_en', 'like', '%' . $searchTerm . '%');  // البح ي ااسم الإنجليز للعامة التجاري
+                    })
+                    ->orWhereHas('category', function ($categoryQuery) use ($searchTerm) {
+                        $categoryQuery->where('name_ar', 'like', '%' . $searchTerm . '%')  // الحث في لاسم العربي للفئ
+                            ->orWhere('name_en', 'like', '%' . $searchTerm . '%');  // البحث في الام الإنجلزي للفئة
+                    });
             });
         }
 
@@ -221,5 +220,4 @@ class ProductsRepository extends BaseRepository
             'count' => $count,
         ];
     }
-
 }

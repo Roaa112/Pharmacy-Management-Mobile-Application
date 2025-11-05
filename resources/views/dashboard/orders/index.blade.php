@@ -43,16 +43,24 @@
                     <td>{{ $order->user->name ?? '-' }}</td>
                     <td>{{ $order->total_price }} EGP</td>
                     <td>{{ $order->delivery_fee }} EGP</td>
-                    <td>{{ $order->payment_method == 'zaincash' ? 'زين كاش' : 'كا' }}</td>
+<td>
+    @if ($order->payment_method === 'zaincash')
+        زين كاش
+    @elseif ($order->payment_method === 'qicard')
+        كي كارد
+    @else
+        كاش
+    @endif
+</td>
 
                     <td>
-                        @if ($order->payment_method == 'zaincash')
+                        @if ($order->payment_method == 'zaincash'||$order->payment_method == 'qicard')
                             @if ($order->payment_image)
                                 <a href="{{ asset('storage/' . $order->payment_image) }}" target="_blank">
                                     <img src="{{ asset('storage/' . $order->payment_image) }}" alt="صور ادفع" width="80">
                                 </a>
                             @else
-                                <span class="text-danger">لا تود صرة</span>
+                                <span class="text-danger">لا تود صورة</span>
                             @endif
                         @else
                             <span class="text-muted">لا ينطبق</span>
@@ -112,8 +120,10 @@
                             @method('PUT')
                             <select name="status" onchange="this.form.submit()" class="form-control form-control-sm">
                                 <option disabled selected>-- اختر --</option>
-                                <option value="pending" {{ $order->status === 'pending' ? 'selected' : '' }}>تم تاكيد الطلب  </option>
-                                <option value="confirmed" {{ $order->status === 'confirmed' ? 'selected' : '' }}> تم شحن الطلب </option>
+                                <option value="pending" {{ $order->status === 'pending' ? 'selected' : '' }}>  الطلب قيد المراجعة  </option>
+                                <option value="confirmed" {{ $order->status === 'confirmed' ? 'selected' : '' }}> تم تاكيد الطلب </option>
+                                 <option value="on_delivery" {{ $order->status === 'on_delivery' ? 'selected' : '' }}>تم شحن الطلب  </option>
+
                                 <option value="canceled" {{ $order->status === 'canceled' ? 'selected' : '' }}>تم الغاء الطلب </option>
                                 <option value="completed" {{ $order->status === 'completed' ? 'selected' : '' }}>تم التوصيل</option>
                             </select>

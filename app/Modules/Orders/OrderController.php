@@ -210,8 +210,8 @@ public function checkout(Request $request)
 {
     $request->validate([
         'address_id' => 'required|integer', // سحن بـ -1
-        'payment_method' => 'required|in:cash,zaincash',
-        'payment_image' => 'nullable|image|required_if:payment_method,zaincash',
+        'payment_method' => 'required|in:cash,zaincash,qicard',
+        'payment_image' => 'nullable|image|required_if:payment_method,zaincash,qicard',
         'notes' => 'nullable|string',
         'coupon_code' => 'nullable|string'
     ]);
@@ -415,7 +415,7 @@ public function checkout(Request $request)
 public function updateStatus(Request $request, Order $order)
 {
     $request->validate([
-        'status' => 'required|in:pending,confirmed,canceled,completed',
+        'status' => 'required|in:pending,confirmed,canceled,completed,on_delivery',
     ]);
 
     $order->status = $request->status;
@@ -471,6 +471,7 @@ public function index()
         return match ($status) {
             'pending' => 'قيد المرجعة ',
             'confirmed' => 'تم تكيد الطلب وجاري التحضير',
+            'on_delivery' => 'جاري الشحن',
             'canceled' => 'تم إلغاء اطلب',
             'completed' => 'تم لاتوصيل بنجاح',
             default => 'غير معروف'
