@@ -50,47 +50,73 @@ class ProductService
             $data['image'] = $product->image;
         }
     }
-    public function updateProduct(Product $product, UpdateProductRequest $request): ?Product
-    {
-        $data = $request->validated();
+   public function updateProduct(Product $product, UpdateProductRequest $request): ?Product
+{
+    $data = $request->validated();
 
-        // معالجة بياات العوض (Promotion)
-        $this->handlePromotionData($data, $request, $product);
+    // ✅ معالجة بيانات العرض (Promotion)
+    $this->handlePromotionData($data, $request, $product);
 
-        // مالجة الصوة الرئيية
-        $this->handleMainImage($data, $request, $product);
+    // ✅ معالجة الصورة الرئيسية
+    $this->handleMainImage($data, $request, $product);
 
-        // تحديث امج ي لـ Repository
-        $product = $this->productsRepository->update($product->id, $data);
-        if (!$product) return null;
+    // ✅ تحديث البيانات الأساسية في الريبو
+    $product = $this->productsRepository->update($product->id, $data);
+    if (!$product) return null;
 
-        // حذف اصر اإضافية (لو طلبة)
-        if ($request->has('remove_extra_images')) {
-            $this->productsRepository->removeExtraImages($product, $request->remove_extra_images);
+    // ✅ لو المستخدم اختار None في الـ promotion_type نحذف الفلاش سيل
+    if (empty($data['promotion_type']) || $data['promotion_type'] === 'none') {
+        if ($product->saleable_type === \App\Models\FlashSale::class) {
+            $product->update([
+                'saleable_id' => null,
+                'saleable_type' => null,
+                'promotion_type' => null,
+            ]);
         }
-
-        // إضافة ور إضفية
-        $images = $request->file('images');
-        if (is_array($images)) {
-            $validImages = array_filter($images, function ($img) {
-                return $img && $img->isValid();
-            });
-
-            if (!empty($validImages)) {
-                $this->productsRepository->addExtraImages($product, $validImages);
+    }
+    // ✅ لو اختار Flash Sale نرجع البيانات القديمة (من غير حذف)
+    elseif ($data['promotion_type'] === 'flash_sale') {
+        // لو المنتج عنده Flash Sale موجود مسبقًا، نسيبه زي ما هو
+        // لو مفيش، ممكن تربطه بفلاش سيل جديد لو حبيت
+        if (!$product->saleable_id || $product->saleable_type !== \App\Models\FlashSale::class) {
+            // تقدر تحدد هنا منين تجيب الفلاش سيل
+            // مثال: أول فلاش سيل نشط حاليًا
+            $flashSale = \App\Models\FlashSale::where('is_active', true)->latest()->first();
+            if ($flashSale) {
+                $product->update([
+                    'saleable_id' => $flashSale->id,
+                    'saleable_type' => \App\Models\FlashSale::class,
+                    'promotion_type' => 'flash_sale',
+                ]);
             }
         }
-
-        // رب امشاكل لصحي بالمنج
-        $this->productsRepository->syncHealthIssues($product, $data['health_issues'] ?? []);
-
-        // تحديث لمقاات (أحجام)
-        if ($request->filled('sizes')) {
-            $this->productsRepository->replaceSizes($product, $data['sizes']);
-        }
-
-        return $product;
     }
+
+    // ✅ حذف الصور الإضافية (لو مطلوبة)
+    if ($request->has('remove_extra_images')) {
+        $this->productsRepository->removeExtraImages($product, $request->remove_extra_images);
+    }
+
+    // ✅ إضافة صور إضافية
+    $images = $request->file('images');
+    if (is_array($images)) {
+        $validImages = array_filter($images, fn($img) => $img && $img->isValid());
+        if (!empty($validImages)) {
+            $this->productsRepository->addExtraImages($product, $validImages);
+        }
+    }
+
+    // ✅ ربط المشاكل الصحية
+    $this->productsRepository->syncHealthIssues($product, $data['health_issues'] ?? []);
+
+    // ✅ تحديث المقاسات (الأحجام)
+    if ($request->filled('sizes')) {
+        $this->productsRepository->replaceSizes($product, $data['sizes']);
+    }
+
+    return $product;
+}
+
     private function handleMultipleImages(Product $product, $request): void
     {
 

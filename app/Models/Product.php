@@ -137,42 +137,41 @@ public function getFinalPriceAfterDiscount(Product $product, ProductSize $size)
 
     //     return $price;
     // }
-    public function getFinalPriceAttribute()
-    {
-        $firstSize = $this->sizes()->first();
-        if (!$firstSize) return 0;
+   public function getFinalPriceAttribute()
+{
+    $firstSize = $this->sizes()->first();
+    if (!$firstSize) return 0;
 
-        $price = $firstSize->price;
-        $discountedByRule = $price;
-        $discountedByFlash = $price;
+    $price = $firstSize->price;
 
-        // خصم discount_rules
-        $discount = $this->getActiveDiscount();
-        if ($discount) {
-            if ($discount->discount_type === 'fixed') {
-                $discountedByRule = round($price * (1 - $discount->discount_value / 100), 2);
-            } elseif ($discount->discount_type === 'percent') {
-                $discountedByRule = round($price * (1 - $discount->discount_value / 100), 2);
-            }
+    // ✅ 1. لو المنتج عليه فلاش سيل Active → نطبق فقط الفلاش
+    if (
+        $this->saleable_type === FlashSale::class &&
+        $this->saleable &&
+        $this->saleable->is_active
+    ) {
+        $start = Carbon::parse($this->saleable->date . ' ' . $this->saleable->time);
+        $end = $start->copy()->addHour();
+
+        if (now()->between($start, $end)) {
+            return round($price * (1 - ($this->saleable->discount_value / 100)), 2);
         }
-
-        // خصم flash sale
-        if (
-            $this->saleable_type === FlashSale::class &&
-            $this->saleable &&
-            $this->saleable->is_active
-        ) {
-            $start = Carbon::parse($this->saleable->date . ' ' . $this->saleable->time);
-            $end = $start->copy()->addHour();
-
-            if (now()->between($start, $end)) {
-$discountedByFlash = round($price * (1 - ($this->saleable->discount_value / 100)), 2);
-            }
-        }
-
-        return min($discountedByRule, $discountedByFlash);
     }
 
+    // ✅ 2. لو مفيش فلاش سيل active → نطبق الخصومات العادية (discount_rules)
+    $discount = $this->getActiveDiscount();
+
+    if ($discount) {
+        if ($discount->discount_type === 'fixed') {
+            return max(0, $price - $discount->discount_value);
+        } elseif ($discount->discount_type === 'percent') {
+            return round($price * (1 - $discount->discount_value / 100), 2);
+        }
+    }
+
+    // ✅ 3. لو مفيش أي خصم → السعر الأصلي
+    return $price;
+}
 
 public function getAvailableSizesAttribute()
 {
