@@ -355,9 +355,18 @@ public function checkout(Request $request)
                 (!$coupon->usage_limit || $coupon->used_count < $coupon->usage_limit) &&
                 (!$coupon->once_per_user || !$coupon->users()->where('user_id', $user->id)->exists())
             ) {
-                $discountAmount = min($coupon->discount_value, $total);
-                $total -= $discountAmount;
-                $couponId = $coupon->id;
+                // $discountAmount = min($coupon->discount_value, $total);
+                // $total -= $discountAmount;
+                // $couponId = $coupon->id;
+                 $discountAmount = ($total * $coupon->discount_value) / 100;
+
+            // نضمن ألا يتجاوز الخصم المجموع الكلي
+            $discountAmount = min($discountAmount, $total);
+
+            // نخصم المبلغ
+            $total -= $discountAmount;
+
+            $couponId = $coupon->id;
             }
         }
     }

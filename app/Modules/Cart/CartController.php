@@ -453,12 +453,11 @@ public function addToCart(Request $request)
         $cartItems = $this->cartService->getCart($user->id);
         $total = $cartItems->sum('total_price');
 
-        // Calculate discount - NOTE: Your Coupon model uses 'discount_value' not 'value'
-        $discount = $coupon->discount_value; // Assuming fixed amount
-        // If you want to support percentage, you'll need to add a 'type' field to your Coupon model
+       
+        $discount = ($total * $coupon->discount_value) / 100;
 
-        // Apply discount
-        $discountedTotal = max(0, $total - $discount); // Ensure total doesn't go negative
+    // تأكد أن الإجمالي لا يصبح سالب
+    $discountedTotal = max(0, $total - $discount); // Ensure total doesn't go negative
 
         // Record coupon usage
         $coupon->increment('used_count');

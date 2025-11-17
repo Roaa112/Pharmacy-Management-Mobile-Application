@@ -215,7 +215,7 @@ class HealthServiceController extends Controller
                             $phase = 'خصوبة منخفضة';
                             $chance = '10%';
                         } elseif (in_array($daysFromOvulation, [1, 2])) {
-                            $phase = 'نهاية التبويض';
+                            $phase = 'بداية التبويض';
                             $chance = '5%';
                         }
                     } elseif ($day->greaterThan($fertileEnd)) {
