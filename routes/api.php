@@ -88,7 +88,7 @@ Route::middleware([\App\Http\Middleware\SetLocaleLang::class])
            Route::get('delivary_prices', [DeliveryPriceController::class, 'indexapi']);
         });  // <-- هذه مغل بشكل صحيح
 });
-Route::prefix('user')->group(function () {
+Route::prefix('user')->middleware('throttle:auth')->group(function () {
     Route::post('register', [UserController::class, 'createUser']);
 
     Route::post('verify', [UserController::class, 'verify']);
@@ -100,7 +100,7 @@ Route::prefix('user')->group(function () {
     Route::middleware('auth:sanctum')->post('password/reset', [UserController::class, 'resetPassword']);
 
 });
-  Route::post('password/reset/auth', [UserController::class, 'resetPasswordAuth']);
+  Route::middleware('throttle:auth')->post('password/reset/auth', [UserController::class, 'resetPasswordAuth']);
 Route::middleware('auth:sanctum')->put('user/update/{userId}', [UserController::class, 'updateUser']);
 Route::middleware('auth:sanctum')->post('logout', [UserController::class, 'logout']);
 Route::middleware(['auth:sanctum'])->middleware(['auth:sanctum', \App\Http\Middleware\SetLocaleLang::class])->get('user/favorites', [FavoriteController::class, 'list']);

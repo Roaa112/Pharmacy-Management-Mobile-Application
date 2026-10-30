@@ -7,19 +7,22 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('carts', function (Blueprint $table) {
-            // Correct the column name: no space and use singular form
-            $table->foreignId('product_size_id')
-                  ->constrained('product_sizes') // no leading space here either
-                  ->onDelete('cascade');
+        if (Schema::hasTable('product_sizes')) {
+            return;
+        }
+
+        Schema::create('product_sizes', function (Blueprint $table) {
+            $table->id();
+            $table->foreignId('product_id')->constrained()->onDelete('cascade');
+            $table->string('size');
+            $table->decimal('price', 10, 2);
+            $table->integer('stock')->default(0);
+            $table->timestamps();
         });
     }
 
     public function down(): void
     {
-        Schema::table('carts', function (Blueprint $table) {
-            $table->dropForeign(['product_size_id']);
-            $table->dropColumn('product_size_id');
-        });
+        Schema::dropIfExists('product_sizes');
     }
 };

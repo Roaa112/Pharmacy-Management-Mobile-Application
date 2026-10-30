@@ -10,7 +10,7 @@ class UpdateFlashSaleRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'discount_value' => 'required|numeric|min:0.01',
+            'discount_value' => 'required|numeric|min:0.01|max:100', // percentage
             'is_active' => 'required|boolean', 
             'date' => 'required|date|after_or_equal:today', 
             'time' => 'required|date_format:H:i', 

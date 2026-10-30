@@ -10,11 +10,22 @@ use Illuminate\Foundation\Configuration\Middleware;
 
 return Application::configure(basePath: dirname(__DIR__))
 
-    // Define rate limiter
+    // Define rate limiters
     ->booting(function () {
         RateLimiter::for('api', function (Request $request) {
             $limit = (int) env('API_RATE_LIMIT', 60);
             return Limit::perMinute($limit)->by($request->user()?->id ?: $request->ip());
+        });
+
+        // Login, registration and password-reset endpoints: limit per account and per IP
+        // so credentials and OTP codes cannot be brute-forced.
+        RateLimiter::for('auth', function (Request $request) {
+            $email = strtolower((string) $request->input('email'));
+
+            return [
+                Limit::perMinute(5)->by('auth-email:'.$email.'|'.$request->ip()),
+                Limit::perMinute(20)->by('auth-ip:'.$request->ip()),
+            ];
         });
     })
 
@@ -26,14 +37,15 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: '/api',
         then: function () {
 
-            // V1 API routes
+            // V1 API routes (throttle:api is already part of the "api" group)
             Route::prefix('api/v1')
-                ->middleware(['api', 'throttle:api'])
+                ->middleware(['api'])
                 ->group(base_path('routes/api.php'));
         }
     )
     ->withMiddleware(function (Middleware $middleware) {
-        //
+        // Apply the API rate limiter to both /api/* and /api/v1/*.
+        $middleware->throttleApi();
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

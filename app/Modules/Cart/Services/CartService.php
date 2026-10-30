@@ -14,14 +14,14 @@ class CartService
 
 
     
-    public function addToCart(array $data)
+    public function addToCart(array $data, int $availableStock)
     {
-        return $this->cartRepository->addOrUpdate($data);
+        return $this->cartRepository->addOrUpdate($data, $availableStock);
     }
- public function removeFromCart($cartId)
-    {
 
-        return $this->cartRepository->delete($cartId);
+    public function removeFromCart($userId, $cartId)
+    {
+        return $this->cartRepository->deleteUserItem($userId, $cartId);
     }
 
     public function getCart($userId)
@@ -40,4 +40,3 @@ class CartService
     //     return $this->cartRepository->clearCart($userId);
     // }
 }
-

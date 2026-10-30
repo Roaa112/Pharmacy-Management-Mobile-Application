@@ -32,6 +32,7 @@ class ApiPointsController extends Controller
             ->whereNotNull('points_earned')
             ->where('points_earned', '>', 0)
                 ->where('points_status', 'earned')
+                ->where('status', '!=', 'canceled') // canceled orders do not earn points
             ->where('created_at', '>=', $validFromDate)
             ->get();
 
@@ -62,6 +63,7 @@ class ApiPointsController extends Controller
             ->whereNotNull('points_earned')
             ->where('points_earned', '>', 0)
                 ->where('points_status', 'earned')
+                ->where('status', '!=', 'canceled')
             ->where('created_at', '<', $validUntilDate)
             ->get();
 

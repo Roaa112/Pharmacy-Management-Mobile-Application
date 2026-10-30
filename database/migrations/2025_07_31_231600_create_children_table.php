@@ -11,6 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // Production already has this table (created outside of migrations).
+        if (Schema::hasTable('children')) {
+            return;
+        }
+
       Schema::create('children', function (Blueprint $table) {
     $table->id();
     $table->foreignId('user_id')->constrained()->onDelete('cascade');

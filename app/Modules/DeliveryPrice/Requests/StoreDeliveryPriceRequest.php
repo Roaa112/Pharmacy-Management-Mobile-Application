@@ -11,7 +11,7 @@ class StoreDeliveryPriceRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'price' => 'required|numeric',
+            'price' => 'required|numeric|min:0',
             'governorate' => 'required',
           
         ];

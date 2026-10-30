@@ -24,3 +24,8 @@ yarn-error.log
 vendor/
 node_modules/
 .env
+
+# Database dumps and release archives contain personal data and secrets; never commit them.
+*.sql
+*.sql.gz
+/versions/

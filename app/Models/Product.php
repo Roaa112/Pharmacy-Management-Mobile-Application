@@ -180,27 +180,40 @@ public function getAvailableSizesAttribute()
     return $this->sizes
         ->filter(fn($size) => $size->stock > 0)
         ->map(function ($size) use ($discount) {
-            $originalPrice = $size->price;
-            $finalPrice = $originalPrice;
-
-            if ($discount) {
-                if (in_array($discount['type'], ['fixed'])) {
-                    // خصم ثابت أو خصم فلاش (قيمة ثابتة)
-                    $finalPrice = max(0, $originalPrice - $discount['value']);
-                } elseif (in_array($discount['type'], ['percent', 'flash'])) {
-                    // خصم نسبي (نسبة مئوية)
-                    $finalPrice = round($originalPrice * (1 - $discount['value'] / 100), 2);
-                }
-            }
-
             return [
                 'id' => $size->id,
                 'size' => $size->size,
-                'original_price' => $originalPrice,
-                'price' => $finalPrice,
+                'original_price' => $size->price,
+                'price' => $this->applyDiscount($size->price, $discount),
                 'stock' => $size->stock,
             ];
         })->values();
+}
+
+/**
+ * Authoritative selling price of one of this product's sizes (after flash sale / discount rules).
+ * Used by the cart and checkout so the client never decides the price.
+ */
+public function priceForSize(ProductSize $size)
+{
+    return $this->applyDiscount($size->price, $this->getActiveFinalDiscount());
+}
+
+private function applyDiscount($originalPrice, ?array $discount)
+{
+    $finalPrice = $originalPrice;
+
+    if ($discount) {
+        if (in_array($discount['type'], ['fixed'])) {
+            // خصم ثابت أو خصم فلاش (قيمة ثابتة)
+            $finalPrice = max(0, $originalPrice - $discount['value']);
+        } elseif (in_array($discount['type'], ['percent', 'flash'])) {
+            // خصم نسبي (نسبة مئوية)
+            $finalPrice = round($originalPrice * (1 - $discount['value'] / 100), 2);
+        }
+    }
+
+    return $finalPrice;
 }
 
 

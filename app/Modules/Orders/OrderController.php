@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use App\Models\ProductSize;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use App\Models\{Order, OrderItem, Cart, Address, DeliveryPrice, Setting, DiscountRule};
 
@@ -211,9 +212,9 @@ public function checkout(Request $request)
     $request->validate([
         'address_id' => 'required|integer', // سحن بـ -1
         'payment_method' => 'required|in:cash,zaincash,qicard',
-        'payment_image' => 'nullable|image|required_if:payment_method,zaincash,qicard',
-        'notes' => 'nullable|string',
-        'coupon_code' => 'nullable|string'
+        'payment_image' => 'nullable|image|mimes:jpeg,jpg,png,webp|max:5120|required_if:payment_method,zaincash,qicard',
+        'notes' => 'nullable|string|max:225',
+        'coupon_code' => 'nullable|string|max:255'
     ]);
 
     $user = auth()->user();
@@ -221,9 +222,11 @@ public function checkout(Request $request)
     $address = null;
 
     if ($request->address_id != -1) {
-        $address = Address::findOrFail($request->address_id);
+        // The address must belong to the user placing the order.
+        $address = Address::where('user_id', $user->id)->findOrFail($request->address_id);
 
-        $deliveryPrice = DeliveryPrice::where('governorate', 'like', '%' . $address->city . '%')->first();
+        $city = addcslashes($address->city, '%_\\');
+        $deliveryPrice = DeliveryPrice::where('governorate', 'like', '%' . $city . '%')->first();
 
         if (!$deliveryPrice) {
             return response()->json(['message' => 'المدينة غير معرفة ضمن مصاريف التوصيل'], 422);
@@ -232,191 +235,217 @@ public function checkout(Request $request)
         $deliveryPriceAmount = $deliveryPrice->price;
     }
 
-    // ✅ جلب السلة مع المنتج والحجم
-    $cartItems = Cart::with(['product', 'size'])->where('user_id', $user->id)->get();
+    $paymentImage = $request->file('payment_image')?->store('payments', 'public');
 
-    if ($cartItems->isEmpty()) {
-        return response()->json(['message' => 'عربة التسوق فارغة'], 422);
-    }
+    // Stock check, stock decrement, coupon usage and cart clearing happen atomically.
+    // Cart rows and product sizes are locked so concurrent or repeated checkouts
+    // cannot oversell stock or turn one cart into two orders.
+    $result = DB::transaction(function () use ($request, $user, $address, $deliveryPriceAmount, $paymentImage) {
+        $cartItems = Cart::with('product')->where('user_id', $user->id)->lockForUpdate()->get();
 
-    // ✅ التقق من المخزون
-    $stockErrors = [];
-
-    foreach ($cartItems as $item) {
-        $available = $item->size->stock ?? 0;
-
-        if ($available <= 0) {
-            $stockErrors[] = [
-                'product' => $item->product->name ?? 'منتج غير معروف',
-                'size' => $item->size->size ?? '-',
-                'message' => 'المنتج غير متوفر حالياً في المخزون'
-            ];
-        } elseif ($item->product_quantity > $available) {
-            $stockErrors[] = [
-                'product' => $item->product->name ?? 'منتج غير معروف',
-                'size' => $item->size->size ?? '-',
-                'message' => "الكمية المطلوبة غير متوفرة، المتاح فقط: {$available}"
-            ];
+        if ($cartItems->isEmpty()) {
+            return response()->json(['message' => 'عربة التسوق فارغة'], 422);
         }
-    }
 
-    if (!empty($stockErrors)) {
-        return response()->json([
-            'message' => 'بعض المنتجات غير متوفرة بالكمات المطلوبة',
-            'errors' => $stockErrors,
-        ], 422);
-    }
+        $sizes = ProductSize::whereIn('id', $cartItems->pluck('product_size_id')->filter())
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
 
-    $subtotal = $cartItems->sum('total_price');
-    $total = $subtotal + $deliveryPriceAmount;
+        // ✅ التقق من المخزون
+        $stockErrors = [];
 
-    $giftDescription = null;
-    $giftRuleId = null;
-    $now = Carbon::now()->addHours(3);
+        foreach ($cartItems as $item) {
+            $size = $sizes->get($item->product_size_id);
+            $available = ($size && $item->product && $size->product_id == $item->product_id) ? $size->stock : 0;
 
-    // ✅ لهدايا بناءً على القواعد
-    $giftRules = DiscountRule::with('targets')
-        ->whereIn('discount_type', ['buy_x_get_y', 'amount_gift'])
-        ->where('starts_at', '<=', $now)
-        ->where('ends_at', '>=', $now)
-        ->get();
-
-    foreach ($giftRules as $rule) {
-        $buyTargets = $rule->targets->where('is_gift', false);
-        $giftTarget = $rule->targets->where('is_gift', true)->first();
-
-        if ($rule->discount_type === 'buy_x_get_y') {
-            $totalQty = 0;
-
-            foreach ($buyTargets as $target) {
-                $matchedItems = $cartItems->filter(function ($item) use ($target) {
-                    return match ($target->target_type) {
-                        'product' => $item->product_id == $target->target_id,
-                        'brand' => $item->product->brand_id == $target->target_id,
-                        'category' => $item->product->category_id == $target->target_id,
-                        default => false,
-                    };
-                });
-
-                $totalQty += $matchedItems->sum('product_quantity');
-            }
-
-            if ($totalQty >= $rule->min_quantity) {
-                $giftDescription = "هدي عند شراء {$rule->min_quantity} من العروض المحددة → هدية: " .
-                    ucfirst($giftTarget->target_type) . " ID: {$giftTarget->target_id}";
-                $giftRuleId = $rule->id;
-                break;
+            if ($available <= 0) {
+                $stockErrors[] = [
+                    'product' => $item->product->name ?? 'منتج غير معروف',
+                    'size' => $size->size ?? '-',
+                    'message' => 'المنتج غير متوفر حالياً في المخزون'
+                ];
+            } elseif ($item->product_quantity > $available) {
+                $stockErrors[] = [
+                    'product' => $item->product->name ?? 'منتج غير معروف',
+                    'size' => $size->size ?? '-',
+                    'message' => "الكمية المطلوبة غير متوفرة، المتاح فقط: {$available}"
+                ];
             }
         }
 
-        if ($rule->discount_type === 'amount_gift') {
-            $totalValue = 0;
+        if (!empty($stockErrors)) {
+            return response()->json([
+                'message' => 'بعض المنتجات غير متوفرة بالكمات المطلوبة',
+                'errors' => $stockErrors,
+            ], 422);
+        }
 
-            foreach ($buyTargets as $target) {
-                $matchedItems = $cartItems->filter(function ($item) use ($target) {
-                    return match ($target->target_type) {
-                        'product' => $item->product_id == $target->target_id,
-                        'brand' => $item->product->brand_id == $target->target_id,
-                        'category' => $item->product->category_id == $target->target_id,
-                        default => false,
-                    };
-                });
+        // Prices are recalculated from the catalogue now; stored cart prices may be stale.
+        foreach ($cartItems as $item) {
+            $size = $sizes->get($item->product_size_id);
+            $item->original_price = $size->price;
+            $item->price_at_time = $item->product->priceForSize($size);
+            $item->total_price = round($item->price_at_time * $item->product_quantity, 2);
+        }
 
-                $totalValue += $matchedItems->sum('total_price');
+        $subtotal = round($cartItems->sum('total_price'), 2);
+        $total = round($subtotal + $deliveryPriceAmount, 2);
+
+        $giftDescription = null;
+        $giftRuleId = null;
+        $now = Carbon::now()->addHours(3);
+
+        // ✅ لهدايا بناءً على القواعد
+        $giftRules = DiscountRule::with('targets')
+            ->whereIn('discount_type', ['buy_x_get_y', 'amount_gift'])
+            ->where('starts_at', '<=', $now)
+            ->where('ends_at', '>=', $now)
+            ->get();
+
+        foreach ($giftRules as $rule) {
+            $buyTargets = $rule->targets->where('is_gift', false);
+            $giftTarget = $rule->targets->where('is_gift', true)->first();
+
+            if (!$giftTarget) {
+                continue;
             }
 
-            if ($totalValue >= $rule->min_amount) {
-                $giftDescription = "هدية عند الشراء بقيمة {$rule->min_amount} من العروض المحددة → هدية: " .
-                    ucfirst($giftTarget->target_type) . " ID: {$giftTarget->target_id}";
-                $giftRuleId = $rule->id;
-                break;
+            if ($rule->discount_type === 'buy_x_get_y') {
+                $totalQty = 0;
+
+                foreach ($buyTargets as $target) {
+                    $matchedItems = $cartItems->filter(function ($item) use ($target) {
+                        return match ($target->target_type) {
+                            'product' => $item->product_id == $target->target_id,
+                            'brand' => $item->product->brand_id == $target->target_id,
+                            'category' => $item->product->category_id == $target->target_id,
+                            default => false,
+                        };
+                    });
+
+                    $totalQty += $matchedItems->sum('product_quantity');
+                }
+
+                if ($totalQty >= $rule->min_quantity) {
+                    $giftDescription = "هدي عند شراء {$rule->min_quantity} من العروض المحددة → هدية: " .
+                        ucfirst($giftTarget->target_type) . " ID: {$giftTarget->target_id}";
+                    $giftRuleId = $rule->id;
+                    break;
+                }
+            }
+
+            if ($rule->discount_type === 'amount_gift') {
+                $totalValue = 0;
+
+                foreach ($buyTargets as $target) {
+                    $matchedItems = $cartItems->filter(function ($item) use ($target) {
+                        return match ($target->target_type) {
+                            'product' => $item->product_id == $target->target_id,
+                            'brand' => $item->product->brand_id == $target->target_id,
+                            'category' => $item->product->category_id == $target->target_id,
+                            default => false,
+                        };
+                    });
+
+                    $totalValue += $matchedItems->sum('total_price');
+                }
+
+                if ($totalValue >= $rule->min_amount) {
+                    $giftDescription = "هدية عند الشراء بقيمة {$rule->min_amount} من العروض المحددة → هدية: " .
+                        ucfirst($giftTarget->target_type) . " ID: {$giftTarget->target_id}";
+                    $giftRuleId = $rule->id;
+                    break;
+                }
             }
         }
-    }
 
-    // ✅ حساب نقاط اللاء
-    $settings = Setting::first();
-    $spendX = (float) $settings->spend_x ?? 0;
-    $getY = (int) $settings->get_y ?? 0;
-    $pointsEarned = $spendX > 0 ? floor($subtotal / $spendX) * $getY : 0;
+        // ✅ حساب نقاط اللاء
+        $settings = Setting::first();
+        $spendX = (float) ($settings?->spend_x ?? 0);
+        $getY = (int) ($settings?->get_y ?? 0);
+        $pointsEarned = $spendX > 0 ? floor($subtotal / $spendX) * $getY : 0;
 
-    $discountAmount = 0;
-    $couponId = null;
+        $discountAmount = 0;
+        $coupon = null;
 
-    if ($request->filled('coupon_code')) {
-        $coupon = \App\Models\Coupon::where('code', $request->coupon_code)
-            ->where('is_active', true)
-            ->first();
+        if ($request->filled('coupon_code')) {
+            $coupon = \App\Models\Coupon::where('code', $request->coupon_code)
+                ->where('is_active', true)
+                ->lockForUpdate()
+                ->first();
 
-        if ($coupon) {
-            if (
-                (!$coupon->start_at || $now->gte($coupon->start_at)) &&
-                (!$coupon->end_at || $now->lte($coupon->end_at)) &&
-                (!$coupon->usage_limit || $coupon->used_count < $coupon->usage_limit) &&
-                (!$coupon->once_per_user || !$coupon->users()->where('user_id', $user->id)->exists())
-            ) {
-                // $discountAmount = min($coupon->discount_value, $total);
-                // $total -= $discountAmount;
-                // $couponId = $coupon->id;
-                 $discountAmount = ($total * $coupon->discount_value) / 100;
+            if ($coupon && $this->couponIsUsableBy($coupon, $user, $now)) {
+                $discountAmount = ($total * $coupon->discount_value) / 100;
 
-            // نضمن ألا يتجاوز الخصم المجموع الكلي
-            $discountAmount = min($discountAmount, $total);
+                // نضمن ألا يتجاوز الخصم المجموع الكلي
+                $discountAmount = round(min($discountAmount, $total), 2);
 
-            // نخصم المبلغ
-            $total -= $discountAmount;
-
-            $couponId = $coupon->id;
+                // نخصم المبلغ
+                $total = round($total - $discountAmount, 2);
+            } else {
+                $coupon = null;
             }
         }
-    }
 
-    // ✅ إناء الطلب
-    $order = Order::create([
-        'user_id' => $user->id,
-        'address_id' => $request->address_id == -1 ? null : $address->id,
-        'payment_method' => $request->payment_method,
-        'payment_image' => $request->file('payment_image')?->store('payments', 'public'),
-        'delivery_fee' => $deliveryPriceAmount,
-        'total_price' => $total,
-        'gift_description' => $giftDescription,
-        'gift_rule_id' => $giftRuleId,
-        'coupon_id' => $couponId,
-        'points_earned' => $pointsEarned,
-        'notes' => $request->notes,
-    ]);
-
-    foreach ($cartItems as $item) {
-        OrderItem::create([
-            'order_id' => $order->id,
-            'product_id' => $item->product_id,
-            'product_size_id' => $item->product_size_id,
-            'quantity' => $item->product_quantity,
-            'price_at_time' => $item->price_at_time,
-            'original_price' => $item->original_price,
-            'total_price' => $item->total_price,
+        // ✅ إناء الطلب
+        $order = Order::create([
+            'user_id' => $user->id,
+            'address_id' => $address?->id,
+            'payment_method' => $request->payment_method,
+            'payment_image' => $paymentImage,
+            'delivery_fee' => $deliveryPriceAmount,
+            'total_price' => $total,
+            'gift_description' => $giftDescription,
+            'gift_rule_id' => $giftRuleId,
+            'coupon_id' => $coupon?->id,
+            'points_earned' => $pointsEarned,
+            'notes' => $request->notes,
         ]);
 
-        $productSize = ProductSize::find($item->product_size_id);
-        if ($productSize) {
-            $productSize->decrement('stock', $item->product_quantity);
+        foreach ($cartItems as $item) {
+            OrderItem::create([
+                'order_id' => $order->id,
+                'product_id' => $item->product_id,
+                'product_size_id' => $item->product_size_id,
+                'quantity' => $item->product_quantity,
+                'price_at_time' => $item->price_at_time,
+                'original_price' => $item->original_price,
+                'total_price' => $item->total_price,
+            ]);
+
+            $sizes->get($item->product_size_id)->decrement('stock', $item->product_quantity);
         }
+
+        Cart::where('user_id', $user->id)->delete();
+
+        if ($coupon) {
+            $coupon->increment('used_count');
+            $coupon->users()->attach($user->id);
+        }
+
+        return response()->json([
+            'message' => 'تم إنشاء الطلب بنجاح',
+            'order_id' => $order->id,
+            'total_price' => $order->total_price,
+            'points_earned' => $pointsEarned,
+            'gift_description' => $giftDescription,
+        ], 201);
+    });
+
+    if ($result->getStatusCode() !== 201 && $paymentImage) {
+        Storage::disk('public')->delete($paymentImage);
     }
 
-    Cart::where('user_id', $user->id)->delete();
+    return $result;
+}
 
-    if ($couponId) {
-        $coupon->increment('used_count');
-        $coupon->users()->attach($user->id);
-    }
-
-    return response()->json([
-        'message' => 'تم إنشاء الطلب بنجاح',
-        'order_id' => $order->id,
-        'total_price' => $order->total_price,
-        'points_earned' => $pointsEarned,
-        'gift_description' => $giftDescription,
-    ], 201);
+private function couponIsUsableBy(\App\Models\Coupon $coupon, $user, Carbon $now): bool
+{
+    return (!$coupon->start_at || $now->gte($coupon->start_at))
+        && (!$coupon->end_at || $now->lte($coupon->end_at))
+        && (!$coupon->usage_limit || $coupon->used_count < $coupon->usage_limit)
+        && (!$coupon->once_per_user || !$coupon->users()->where('user_id', $user->id)->exists());
 }
 
 
@@ -427,8 +456,30 @@ public function updateStatus(Request $request, Order $order)
         'status' => 'required|in:pending,confirmed,canceled,completed,on_delivery',
     ]);
 
-    $order->status = $request->status;
-    $order->save();
+    $updated = DB::transaction(function () use ($request, $order) {
+        // Lock the order so a double-submitted cancel cannot restore stock twice.
+        $order = Order::lockForUpdate()->findOrFail($order->id);
+
+        if (!$order->canTransitionTo($request->status)) {
+            return false;
+        }
+
+        // Canceling returns the reserved quantities to stock (exactly once: canceled is final).
+        if ($request->status === 'canceled') {
+            foreach ($order->items as $item) {
+                ProductSize::whereKey($item->product_size_id)->increment('stock', $item->quantity);
+            }
+        }
+
+        $order->status = $request->status;
+        $order->save();
+
+        return true;
+    });
+
+    if (!$updated) {
+        return redirect()->back()->with('error', "لا يمكن تغيير حالة الطلب من {$order->status} إلى {$request->status}");
+    }
 
     return redirect()->back()->with('success', 'تم تحديث حة الطب بنجا');
 }
@@ -442,7 +493,7 @@ public function index()
 
    $totalEarned = Order::where('status', 'completed')
     ->whereDoesntHave('returnRequests', function ($query) {
-        $query->whereIn('status', [ 'confirmed']);
+        $query->whereIn('status', ['accepted']);
     })
     ->sum('total_price');
 
@@ -455,7 +506,7 @@ public function index()
 
  public function track($id)
     {
-        $order = Order::find($id);
+        $order = Order::where('user_id', auth()->id())->find($id);
 
         if (!$order) {
             return response()->json([
@@ -492,7 +543,9 @@ public function index()
 
   public function details($id)
 {
-    $order = \App\Models\Order::with(['user', 'address', 'items.product.productImages', 'items.size'])->find($id);
+    $order = \App\Models\Order::with(['user', 'address', 'items.product.productImages', 'items.size'])
+        ->where('user_id', auth()->id())
+        ->find($id);
 
     if (!$order) {
         return response()->json([

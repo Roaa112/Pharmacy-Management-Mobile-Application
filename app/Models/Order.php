@@ -22,8 +22,31 @@ class Order extends Model
         'gift_description',
         'gift_rule_id',
         'points_earned',
+        'coupon_id',
         'status'
     ];
+
+    /**
+     * Forward order of the fulfilment flow. "canceled" is reachable from any non-final status;
+     * "completed" and "canceled" are final.
+     */
+    public const STATUS_FLOW = ['pending', 'confirmed', 'on_delivery', 'completed'];
+
+    public function canTransitionTo(string $newStatus): bool
+    {
+        if (in_array($this->status, ['completed', 'canceled'], true)) {
+            return false;
+        }
+
+        if ($newStatus === 'canceled') {
+            return true;
+        }
+
+        $current = array_search($this->status, self::STATUS_FLOW, true);
+        $next = array_search($newStatus, self::STATUS_FLOW, true);
+
+        return $current !== false && $next !== false && $next > $current;
+    }
 public function getDisplayIdAttribute()
 {
     $id = "طلب #{$this->id}";
@@ -34,7 +57,7 @@ public function getDisplayIdAttribute()
         request()->is('dashboard/*') ||
         request()->is('admin/*')
     ) {
-        if ($this->returnRequests()->whereIn('status', [ 'confirmed'])->exists()) {
+        if ($this->returnRequests()->whereIn('status', ['accepted'])->exists()) {
             return "$id <span style='color: red;'>(تم استرجاعه)</span>";
         }
     }
@@ -47,7 +70,7 @@ public function getDisplayIdAttribute()
         static::addGlobalScope('hide_refunded_orders_for_api', function (Builder $builder) {
             if (Request::is('api/*')) {
                 $builder->whereDoesntHave('returnRequests', function ($query) {
-                    $query->whereIn('status', [ 'confirmed']);
+                    $query->whereIn('status', ['accepted']);
                 });
             }
         });

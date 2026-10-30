@@ -6,6 +6,8 @@ use App\Models\Address;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Request;
+use Illuminate\Http\Request as HttpRequest;
+use App\Modules\Shared\Enums\HttpStatusCodeEnum;
 use App\Modules\Address\Services\AddressService;
 use App\Modules\Address\Resources\AddressCollection;
 use App\Modules\Address\Requests\StoreAddressRequest;
@@ -38,6 +40,10 @@ class ApiAddressController extends Controller
 
    public function updateAddress($id, UpdateAddressRequest $request)
 {
+    if (!$this->findUserAddress($request, $id)) {
+        return response()->json(['error' => 'Address not found'], 404);
+    }
+
     $Address = $this->addressService->updateAddress($id, $request->validated());
 
     if (!$Address) {
@@ -52,8 +58,12 @@ class ApiAddressController extends Controller
 }
 
 
-    public function deleteAddress($id)
+    public function deleteAddress(HttpRequest $request, $id)
     {
+        if (!$this->findUserAddress($request, $id)) {
+            return errorJsonResponse("There is No Address with id = " . $id);
+        }
+
         $Address = $this->addressService->deleteAddress($id);
         if ($Address == true) {
             return successJsonResponse([], __('Address.success.delete_Address Address_id = ' . $Address['id']));
@@ -75,9 +85,9 @@ class ApiAddressController extends Controller
         data_get($addresses, 'count')
     );
 }
-public function toggleDefault($id)
+public function toggleDefault(HttpRequest $request, $id)
 {
-    $address = Address::findOrFail($id);
+    $address = Address::where('user_id', $request->user()->id)->findOrFail($id);
 
     // لو العنوان الحالي تابع لمستخدم
     $userId = $address->user_id;
@@ -100,13 +110,18 @@ public function toggleDefault($id)
 }
 
 
-    public function getAddressById($AddressId)
+    public function getAddressById(HttpRequest $request, $AddressId)
     {
-        $Address = $this->addressService->getAddressById($AddressId);
+        $Address = $this->findUserAddress($request, $AddressId);
         if (!$Address) {
             return errorJsonResponse("Address $AddressId is not found!", HttpStatusCodeEnum::Not_Found->value);
         }
-        return successJsonResponse(new AddressCollection($Address), __('Address.success.Address_details'));
+        return successJsonResponse(new AddressCollection(collect([$Address])), __('Address.success.Address_details'));
+    }
+
+    private function findUserAddress(HttpRequest $request, $id): ?Address
+    {
+        return Address::where('user_id', $request->user()->id)->find($id);
     }
 
 

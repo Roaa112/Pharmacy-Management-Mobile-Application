@@ -498,13 +498,16 @@ public function index(Request $request)
 
     public function update(UpdateMedicationRequest $request, Medication $medication)
     {
-      
+        $this->ensureOwner($request, $medication);
+
         $updated = $this->service->update($medication, $request->validated());
         return response()->json($updated->load('times', 'days'));
     }
 
  public function updateLogStatus(Request $request, Medication $medication)
 {
+    $this->ensureOwner($request, $medication);
+
     $request->validate([
         'time' => 'required|date_format:H:i:s',
         'status' => 'required|in:taken,missed',
@@ -547,9 +550,10 @@ public function index(Request $request)
         'message' => 'تم تحديث حلة الجرعة بنجح',
     ]);
 }
-    public function destroy(Medication $medication)
+    public function destroy(Request $request, Medication $medication)
     {
-       
+        $this->ensureOwner($request, $medication);
+
         $medication->delete();
         return response()->json(['message' => 'Deleted successfully']);
     }
@@ -560,7 +564,7 @@ public function index(Request $request)
         'day' => 'required|in:saturday,sunday,monday,tuesday,wednesday,thursday,friday',
     ]);
 
-    $medication = Medication::find($request->medication_id);
+    $medication = Medication::where('user_id', $request->user()->id)->find($request->medication_id);
 
     if (!$medication) {
         return response()->json(['success' => false, 'message' => 'Medication not found.'], 404);
@@ -610,6 +614,12 @@ public function index(Request $request)
     return response()->json(['success' => false, 'message' => 'Day not found for this medication.'], 404);
 }
 
-
+    /**
+     * Medications are personal health data: only their owner may read or change them.
+     */
+    private function ensureOwner(Request $request, Medication $medication): void
+    {
+        abort_unless((int) $medication->user_id === $request->user()->id, 404);
+    }
 
 }

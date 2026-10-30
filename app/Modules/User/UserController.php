@@ -18,6 +18,7 @@ use App\Modules\User\Requests\VerifyOtpRequest;
 use App\Modules\Shared\Enums\HttpStatusCodeEnum;
 use App\Modules\User\Requests\CreateUserRequest;
 use App\Modules\User\Requests\UpdateUserRequest;
+use Laravel\Sanctum\PersonalAccessToken;
 
 
 class UserController extends Controller
@@ -60,62 +61,105 @@ class UserController extends Controller
 
     //     return response()->json(['message' => 'OTP verified. You may now reset your password.']);
     // }
+    public function sendResetOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+        ]);
+
+        $user = User::where('email', $request->email)->first();
+
+        // Same response whether or not the email exists, so accounts cannot be enumerated.
+        if ($user) {
+            $otp = (string) random_int(100000, 999999);
+            $user->otp_code = Hash::make($otp);
+            $user->otp_expires_at = now()->addMinutes(10);
+            $user->save();
+
+            Mail::to($user->email)->send(new SendOtp($otp));
+        }
+
+        return response()->json(['message' => 'If this email is registered, an OTP has been sent to it.']);
+    }
+
+    public function verifyOtp(Request $request)
+    {
+        $request->validate([
+            'email' => 'required|email',
+            'otp_code' => 'required|digits:6',
+        ]);
+
+        if (!$this->findUserWithValidOtp($request->email, $request->otp_code)) {
+            return response()->json(['message' => 'Invalid or expired OTP.'], 422);
+        }
+
+        return response()->json(['message' => 'OTP verified. You may now reset your password.']);
+    }
+
     public function resetPassword(Request $request)
     {
-
-        // $otp = request()->header('otp');
-
         $request->validate([
             'email' => 'nullable|email',
             'password' => 'required|string|confirmed|min:8',
         ]);
 
-        // $user = User::where('email', $request->email)->first();
-
-    $user = auth()->user();
-        if (!$user) {
-            return response()->json(['message' => 'User not found.'], 404);
-        }
-        // if (!$user || $user->otp_code !== $otp|| now()->gt($user->otp_expires_at)) {
-        //     return response()->json(['message' => 'Invalid or expired OTP.'], 422);
-        // }
+        $user = $request->user();
 
         $user->password = Hash::make($request->password);
-        // $user->otp_code = null;
-        // $user->otp_expires_at = null;
         $user->save();
+
+        // Sign out every other device; keep the session that made this change.
+        $currentToken = $user->currentAccessToken();
+        $user->tokens()
+            ->when($currentToken instanceof PersonalAccessToken, fn ($q) => $q->where('id', '!=', $currentToken->id))
+            ->delete();
 
         return response()->json(['message' => 'Password reset successful.']);
     }
 
-
-  
-   public function resetPasswordAuth(Request $request)
+    /**
+     * Unauthenticated password reset. Requires the OTP emailed by sendResetOtp().
+     */
+    public function resetPasswordAuth(Request $request)
     {
-
-        // $otp = request()->header('otp');
-
         $request->validate([
             'email' => 'required|email',
+            'otp_code' => 'required|digits:6',
             'password' => 'required|string|confirmed|min:8',
         ]);
 
-         $user = User::where('email', $request->email)->first();
+        $user = $this->findUserWithValidOtp($request->email, $request->otp_code);
 
-   
         if (!$user) {
-            return response()->json(['message' => 'email not found.'], 404);
+            return response()->json(['message' => 'Invalid or expired OTP.'], 422);
         }
-        // if (!$user || $user->otp_code !== $otp|| now()->gt($user->otp_expires_at)) {
-        //     return response()->json(['message' => 'Invalid or expired OTP.'], 422);
-        // }
 
         $user->password = Hash::make($request->password);
-        // $user->otp_code = null;
-        // $user->otp_expires_at = null;
+        $user->otp_code = null;
+        $user->otp_expires_at = null;
         $user->save();
 
+        // A password reset must invalidate every existing session/token.
+        $user->tokens()->delete();
+
         return response()->json(['message' => 'Password reset successful.']);
+    }
+
+    private function findUserWithValidOtp(string $email, string $otp): ?User
+    {
+        $user = User::where('email', $email)->first();
+
+        if (
+            !$user
+            || !$user->otp_code
+            || !$user->otp_expires_at
+            || now()->gt($user->otp_expires_at)
+            || !Hash::check($otp, $user->otp_code)
+        ) {
+            return null;
+        }
+
+        return $user;
     }
   
   
@@ -128,7 +172,7 @@ class UserController extends Controller
     {
         // التحقق من تأكيد كلمة المور
     if (!isset($request['confirm_password']) || $request['password'] !== $request['confirm_password']) {
-        return ['error' => 'Password confirmation does not match'];
+        return response()->json(['error' => 'Password confirmation does not match'], 422);
     }
 
         $user = $this->userService->createUser($request->validated());
@@ -161,6 +205,11 @@ class UserController extends Controller
 
     public function updateUser($id, UpdateUserRequest $request)
     {
+        // Users may only update their own profile.
+        if ((int) $id !== $request->user()->id) {
+            return errorJsonResponse('Forbidden', HttpStatusCodeEnum::Forbidden->value);
+        }
+
         $user = $this->userService->updateUser($id, $request->validated());
         return successJsonResponse(new UserResource($user), __('user.success.update_user'));
     }

@@ -8,6 +8,7 @@ use App\Models\Coupon;
 use App\Models\Product;
 use App\Models\ProductSize;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
 use App\Modules\Cart\Services\CartService;
@@ -95,8 +96,7 @@ public function showCart(Request $request)
 
         $originalPrice = $size->price;
 
-        $currentPrice = collect($product->available_sizes)
-            ->firstWhere('size', $size->size)['price'] ?? $originalPrice;
+        $currentPrice = $product->priceForSize($size);
 
         $item->price_at_time = $currentPrice;
         $item->original_price = $originalPrice;
@@ -200,9 +200,10 @@ public function showCart(Request $request)
 public function addToCart(Request $request)
 {
     $request->validate([
-        'product_id'   => 'required|exists:products,id',
-        'product_size' => 'required|exists:product_sizes,id',
-        'quantity'     => 'required|integer|min:1',
+        'product_id'   => 'required|integer|exists:products,id',
+        // The size must belong to the product, otherwise another product's (cheaper) size price would be used.
+        'product_size' => ['required', 'integer', Rule::exists('product_sizes', 'id')->where('product_id', $request->input('product_id'))],
+        'quantity'     => 'required|integer|min:1|max:1000',
     ]);
 
     $product = Product::with('sizes')->findOrFail($request->product_id);
@@ -224,7 +225,7 @@ public function addToCart(Request $request)
     $quantity = min($request->quantity, $productSize->stock);
 
     $originalPrice = $productSize->price;
-    $finalPrice = collect($product->available_sizes)->firstWhere('size', $productSize->size)['price'] ?? $originalPrice;
+    $finalPrice = $product->priceForSize($productSize);
     $totalPrice = $finalPrice * $quantity;
 
     $data = $this->cartService->addToCart([
@@ -235,7 +236,7 @@ public function addToCart(Request $request)
         'price_at_time'    => $finalPrice,
         'total_price'      => $totalPrice,
         'original_price'   => $originalPrice,
-    ]);
+    ], $productSize->stock);
 
     return response()->json([
         'success' => true,
@@ -245,9 +246,9 @@ public function addToCart(Request $request)
 }
 
 
-   public function removeItem($id)
+   public function removeItem(Request $request, $id)
 {
-    $removed = $this->cartService->removeFromCart($id);
+    $removed = $this->cartService->removeFromCart($request->user()->id, $id);
 
     if (!$removed) {
         return response()->json([
@@ -264,11 +265,13 @@ public function addToCart(Request $request)
 
  public function updateQuantity(Request $request)
 {
+    $sizeOfProduct = Rule::exists('product_sizes', 'id')->where('product_id', $request->input('product_id'));
+
     $request->validate([
-        'product_id' => 'required|exists:products,id',
+        'product_id' => 'required|integer|exists:products,id',
         'operation' => 'nullable|in:increment,decrement',
-        'old_size_id' => 'nullable|exists:product_sizes,id',
-        'new_size_id' => 'nullable|exists:product_sizes,id',
+        'old_size_id' => ['nullable', 'integer', $sizeOfProduct],
+        'new_size_id' => ['nullable', 'integer', $sizeOfProduct],
     ]);
 
     $user = $request->user();
@@ -319,8 +322,7 @@ public function addToCart(Request $request)
             ], 400);
         }
 
-        $finalPrice = collect($product->available_sizes)
-            ->firstWhere('size', $newSize->size)['price'] ?? $newSize->price;
+        $finalPrice = $product->priceForSize($newSize);
 
         // لو فيه عنصر بنفس الحجم الجديد → دمج
         $existingItem = Cart::where('user_id', $user->id)
@@ -371,8 +373,7 @@ public function addToCart(Request $request)
             $cartItem->product_quantity = $stock;
         }
 
-        $finalPrice = collect($product->available_sizes)
-            ->firstWhere('size', $size->size)['price'] ?? $size->price;
+        $finalPrice = $product->priceForSize($size);
 
         $cartItem->price_at_time = $finalPrice;
         $cartItem->original_price = $size->price;
@@ -459,9 +460,9 @@ public function addToCart(Request $request)
     // تأكد أن الإجمالي لا يصبح سالب
     $discountedTotal = max(0, $total - $discount); // Ensure total doesn't go negative
 
-        // Record coupon usage
-        $coupon->increment('used_count');
-        $coupon->users()->attach($user->id);
+        // This endpoint only previews the discount. Usage is recorded once, at checkout;
+        // recording it here consumed the coupon without an order and made
+        // "once per user" coupons fail silently at checkout.
 
         return response()->json([
             'success' => true,

@@ -18,14 +18,30 @@ class ReturnRequestController extends Controller
 public function store(Request $request)
 {
     $request->validate([
-        'order_id' => 'required|exists:orders,id',
-        'reason' => 'required',
-        'note' => 'nullable',
-        'refund_amount' => 'nullable|numeric',
-        'refund_method' => 'nullable|string',
-        'address' => 'nullable|string',
-        'images.*' => 'nullable|image|max:2048',
+        'order_id' => 'required|integer',
+        'reason' => 'required|string|max:255',
+        'note' => 'nullable|string|max:2000',
+        'refund_amount' => 'nullable|numeric|min:0',
+        'refund_method' => 'nullable|string|max:255',
+        'address' => 'nullable|string|max:255',
+        'images' => 'nullable|array|max:10',
+        'images.*' => 'image|mimes:jpeg,jpg,png,webp|max:2048',
     ]);
+
+    // A return can only be requested for one of the caller's own orders.
+    $order = Order::where('user_id', auth()->id())->find($request->order_id);
+
+    if (!$order) {
+        return response()->json(['message' => 'الطلب غير موجود'], 404);
+    }
+
+    // The requested refund cannot exceed what was paid for the order.
+    if ($request->filled('refund_amount') && $request->refund_amount > $order->total_price) {
+        return response()->json([
+            'message' => 'قيمة الاسترجاع أكبر من قيمة الطلب',
+            'errors' => ['refund_amount' => ['The refund amount may not be greater than the order total.']],
+        ], 422);
+    }
 
     $return = ReturnRequest::create([
         'user_id' => auth()->id(),
@@ -105,6 +121,12 @@ public function cancel($id)
     public function accept($id)
     {
         $return = ReturnRequest::findOrFail($id);
+
+        // Only pending requests can be decided (not ones the customer canceled or already decided).
+        if ($return->status !== 'pending') {
+            return redirect()->back()->with('error', 'لا يمكن تعديل طلب مرتجع تمت معالجته');
+        }
+
         $return->update(['status' => 'accepted']);
 
         // Optional: send notification
@@ -116,6 +138,11 @@ public function cancel($id)
     {
         $request->validate(['reason' => 'nullable|string']);
         $return = ReturnRequest::findOrFail($id);
+
+        if ($return->status !== 'pending') {
+            return redirect()->back()->with('error', 'لا يمكن تعديل طلب مرتجع تمت معالجته');
+        }
+
         $return->update([
             'status' => 'rejected',
             'note' => $request->reason ?? $return->note,

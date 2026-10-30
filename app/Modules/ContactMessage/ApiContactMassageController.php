@@ -33,7 +33,7 @@ class ApiContactMassageController extends Controller
         $data['user_id'] = $user->id;
 
         // Log the data for debugging (اختياري)
-        Log::info('Creating contact message with data:', $data);
+        Log::info('Creating contact message', ['user_id' => $user->id]);
         $data = json_decode(json_encode($data));
         // Call the service to create the message
         $this->contactMessageService->createContactMessage($data);

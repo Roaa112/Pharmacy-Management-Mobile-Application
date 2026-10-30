@@ -10,7 +10,7 @@ class StoreCouponRequest extends FormRequest
     {
         return [
             'code' => ['required', 'string', 'max:255', 'unique:coupons,code'],
-            'discount_value' => ['required', 'numeric', 'min:0'],
+            'discount_value' => ['required', 'numeric', 'min:0', 'max:100'], // percentage
             'is_active' => ['nullable', 'boolean'],
             'start_at' => ['required', 'date'],
             'end_at' => ['required', 'date', 'after_or_equal:start_at'],

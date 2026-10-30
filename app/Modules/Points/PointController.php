@@ -29,6 +29,7 @@ class PointController extends Controller
     $query = Order::whereNotNull('points_earned')
         ->where('points_earned', '>', 0)
         ->where('points_status', 'earned') // ✅ لسه ما استبدلتش
+        ->where('status', '!=', 'canceled')
         ->where('created_at', '>=', $validFromDate);
 
     // ✅ فلتر بالاسم لو موجود

@@ -33,7 +33,7 @@ class HomeController extends Controller
     $totalOrders = Order::count();
     $totalRevenue = Order::where('status', 'completed')
     ->whereDoesntHave('returnRequests', function ($query) {
-        $query->whereIn('status', [ 'confirmed']);
+        $query->whereIn('status', ['accepted']);
     })
     ->sum('total_price');
     $confirmedOrders = Order::where('status', 'confirmed')->count();

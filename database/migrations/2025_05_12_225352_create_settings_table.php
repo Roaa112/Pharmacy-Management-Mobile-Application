@@ -25,6 +25,9 @@ return new class extends Migration
             $table->string('spend_x')->nullable();
             $table->string('get_y')->nullable();
             $table->string('map_location_url')->nullable();
+            $table->integer('zaincash')->nullable();
+            $table->integer('keycard')->nullable();
+            $table->bigInteger('points_validity_days')->nullable();
             $table->timestamps();
         });
 

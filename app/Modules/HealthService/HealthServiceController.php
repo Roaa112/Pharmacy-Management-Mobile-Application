@@ -253,7 +253,11 @@ class HealthServiceController extends Controller
 
     public function storeBodyWeight(Request $request)
     {
-        $data = $request->only(['height', 'weight', 'unit']);
+        $data = $request->validate([
+            'height' => 'required|numeric|gt:0|max:300',
+            'weight' => 'required|numeric|gt:0|max:1000',
+            'unit' => 'required|string|max:20',
+        ]);
         return response()->json(
             $this->healthService->calculateBodyWeight($request->user()->id, $data)
         );
@@ -261,7 +265,11 @@ class HealthServiceController extends Controller
 
     public function storeBloodSugar(Request $request)
     {
-        $data = $request->only(['value', 'condition_type', 'measured_at']);
+        $data = $request->validate([
+            'value' => 'required|numeric|min:0|max:2000',
+            'condition_type' => 'required|string|max:255',
+            'measured_at' => 'required|date',
+        ]);
         return response()->json(
             $this->healthService->storeBloodSugar($request->user()->id, $data)
         );
@@ -269,7 +277,12 @@ class HealthServiceController extends Controller
 
     public function storeBloodPressure(Request $request)
     {
-        $data = $request->only(['systolic', 'diastolic', 'condition_type', 'measured_at']);
+        $data = $request->validate([
+            'systolic' => 'required|integer|min:1|max:400',
+            'diastolic' => 'required|integer|min:1|max:300',
+            'condition_type' => 'required|string|max:255',
+            'measured_at' => 'required|date',
+        ]);
         return response()->json(
             $this->healthService->storeBloodPressure($request->user()->id, $data)
         );
@@ -277,7 +290,9 @@ class HealthServiceController extends Controller
 
     public function storePregnancy(Request $request)
     {
-        $data = $request->only(['last_period_date']);
+        $data = $request->validate([
+            'last_period_date' => 'required|date',
+        ]);
         return response()->json(
             $this->healthService->calculatePregnancy($request->user()->id, $data)
         );
@@ -523,8 +538,15 @@ class HealthServiceController extends Controller
      */
     public function markAsCompleted(Request $request, Vaccine $vaccine)
     {
+        // The vaccine must belong to one of the caller's children.
+        abort_unless((int) $vaccine->child?->user_id === $request->user()->id, 404);
+
+        $validated = $request->validate([
+            'is_completed' => 'sometimes|boolean',
+        ]);
+
         $vaccine->update([
-            'is_completed' => $request->input('is_completed', true),
+            'is_completed' => $validated['is_completed'] ?? true,
         ]);
 
         return response()->json([
@@ -534,9 +556,9 @@ class HealthServiceController extends Controller
     }
 
 
-    public function destroychild($id)
+    public function destroychild(Request $request, $id)
     {
-        $child = Child::find($id);
+        $child = Child::where('user_id', $request->user()->id)->find($id);
 
         if (!$child) {
             return response()->json([

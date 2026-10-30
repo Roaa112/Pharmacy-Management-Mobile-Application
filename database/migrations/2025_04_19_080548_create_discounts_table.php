@@ -1,33 +1,16 @@
 <?php
 
-// use Illuminate\Database\Migrations\Migration;
-// use Illuminate\Database\Schema\Blueprint;
-// use Illuminate\Support\Facades\Schema;
+use Illuminate\Database\Migrations\Migration;
 
-// return new class extends Migration
-// {
-//     /**
-//      * Run the migrations.
-//      */
-//     public function up(): void
-//     {
-//         Schema::create('discounts', function (Blueprint $table) {
-//             $table->id();
-//             $table->string('title');
-//             $table->decimal('precentage', 5, 2);
-//             $table->date('start_date');
-//             $table->date('end_date')->nullable();
-//             $table->date('expire_date')->nullable();
-//             $table->boolean('is_active')->default(true);
-//             $table->timestamps();
-//         });
-//     }
+// The legacy `discounts` table was replaced by `discount_rules` (2025_06_23_120617).
+// This migration is kept as a no-op because it is already recorded as run in production.
+return new class extends Migration
+{
+    public function up(): void
+    {
+    }
 
-//     /**
-//      * Reverse the migrations.
-//      */
-//     public function down(): void
-//     {
-//         Schema::dropIfExists('discounts');
-//     }
-// };
+    public function down(): void
+    {
+    }
+};

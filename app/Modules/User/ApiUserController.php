@@ -30,19 +30,20 @@ class ApiUserController extends Controller
 
    
     
-    public function getUserData()
+    public function getUserData(Request $request)
     {
         $user = Auth::guard('api')->user(); // لو انتي شغالة على API Guard, أو عادي بس Auth::user()
-    
+
         if (!$user) {
             return response()->json([
                 'message' => 'Unauthenticated.',
             ], 401);
         }
-    
+
+        // Return the caller's existing token instead of minting a new, never-expiring one on every call.
         return response()->json([
             'data' => new UserResource($user),
-            'token' => $user->createToken('API Token')->plainTextToken, // لو حابة تبعتي توكن كمان
+            'token' => $request->bearerToken(),
         ], 200);
     }
 

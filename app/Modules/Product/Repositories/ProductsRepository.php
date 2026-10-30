@@ -3,6 +3,8 @@
 namespace App\Modules\Product\Repositories;
 
 use App\Models\Product;
+use App\Models\OrderItem;
+use Illuminate\Support\Facades\DB;
 use App\Modules\Shared\Repositories\BaseRepository;
 use Illuminate\Database\Eloquent\Model;
 
@@ -116,12 +118,50 @@ class ProductsRepository extends BaseRepository
         $product->healthIssues()->sync($healthIssues);
     }
 
+    /**
+     * Sync the product's sizes with the submitted list.
+     *
+     * Sizes are updated in place instead of being deleted and recreated: deleting a size
+     * cascades to order_items and carts, which used to wipe order history on every product edit.
+     */
     public function replaceSizes(Product $product, array $sizes): void
     {
-        $product->sizes()->delete(); // clear old
-        foreach ($sizes as $sizeData) {
-            $product->sizes()->create($sizeData);
-        }
+        DB::transaction(function () use ($product, $sizes) {
+            $keptIds = [];
+
+            foreach ($sizes as $sizeData) {
+                if (!isset($sizeData['size'], $sizeData['price'])) {
+                    continue; // empty form row
+                }
+
+                $attributes = [
+                    'size' => $sizeData['size'],
+                    'price' => $sizeData['price'],
+                    'stock' => $sizeData['stock'] ?? 0,
+                ];
+
+                $size = !empty($sizeData['id']) ? $product->sizes()->find($sizeData['id']) : null;
+
+                if ($size) {
+                    $size->update($attributes);
+                } else {
+                    $size = $product->sizes()->create($attributes);
+                }
+
+                $keptIds[] = $size->id;
+            }
+
+            $removed = $product->sizes()->whereNotIn('id', $keptIds)->get();
+
+            foreach ($removed as $size) {
+                if (OrderItem::where('product_size_id', $size->id)->exists()) {
+                    // Sold before: keep the row for order history, just take it off sale.
+                    $size->update(['stock' => 0]);
+                } else {
+                    $size->delete();
+                }
+            }
+        });
     }
 
     public function getLatestProducts(int $limit = 15)

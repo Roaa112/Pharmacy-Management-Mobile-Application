@@ -2,6 +2,7 @@
 
 namespace App\Modules\User\Services;
 
+use Illuminate\Support\Facades\Log;
 use App\Modules\User\Resources\UserCollection;
 use App\Modules\User\Repositories\UsersRepository;
 use App\Modules\User\Requests\ListAllUsersRequest;
@@ -69,7 +70,12 @@ class UserService
     
     public function updateUser($id, $request)
     {
-        $user = $this->constructUserModel($request);
+        // Only profile fields are user-editable; verification and OTP state are server-controlled.
+        $user = [
+            'name' => $request['name'],
+            'email' => $request['email'],
+            'phone' => $request['phone'] ?? null,
+        ];
         return $this->usersRepository->update($id, $user);
     }
 

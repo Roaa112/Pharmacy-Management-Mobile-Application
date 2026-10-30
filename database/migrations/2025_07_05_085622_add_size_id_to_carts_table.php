@@ -6,23 +6,20 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
+        // Production already has this column (added outside of migrations).
+        if (Schema::hasColumn('carts', 'product_size_id')) {
+            return;
+        }
+
         Schema::table('carts', function (Blueprint $table) {
-           $table->foreignId('product_size_id')->constrained()->onDelete('cascade');
+            $table->foreignId('product_size_id')->nullable()->constrained('product_sizes')->onDelete('cascade');
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::table('carts', function (Blueprint $table) {
-            //
-        });
+        //
     }
 };
