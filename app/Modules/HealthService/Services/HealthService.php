@@ -10,6 +10,7 @@ use App\Models\VaccinationSchedule;
 use App\Models\PregnancyCalculation;
 use App\Models\BloodSugarMeasurement;
 use App\Models\BloodPressureMeasurement;
+use App\Support\StoreClock;
 
 class HealthService
 {
@@ -81,20 +82,13 @@ public function calculateOvulation($userId, array $validated)
 
     for ($i = 0; $i < $cycleLength; $i++) {
         $day = $startDate->copy()->addDays($i);
-        ['phase' => $phase, 'pregnancy_chance' => $chance] = $this->ovulationDayPhase($i, $day, $ovulationDay, $periodLength);
+        $info = $this->ovulationDayPhase($i, $day, $ovulationDay, $periodLength, 'calculation');
 
         $formattedDate = $day->format('Y-m-d');
 
-        $phases[$formattedDate] = [
-            'phase' => $phase,
-            'pregnancy_chance' => $chance,
-        ];
+        $phases[$formattedDate] = $info;
 
-        $days[] = [
-            'date' => $formattedDate,
-            'phase' => $phase,
-            'pregnancy_chance' => $chance,
-        ];
+        $days[] = ['date' => $formattedDate] + $info;
     }
 $nextPeriodStart = $startDate->copy()->addDays($cycleLength);
 
@@ -132,27 +126,77 @@ $nextPeriodStart = $startDate->copy()->addDays($cycleLength);
 }
 
 /**
+ * Chance of pregnancy per cycle phase. Ovulation is cycle_length - 14 (14-day luteal phase);
+ * the fertile window is the 5 days before ovulation, ovulation day and 2 days after.
+ * Values follow the shape of Wilcox et al. (NEJM 1995): highest on the 2 days before and on
+ * ovulation day, and close to zero once the egg is gone (1-2 days after).
+ */
+public const OVULATION_PHASE_CHANCES = [
+    'menstruation' => '0%',
+    'not_fertile' => '0%',
+    'fertile_low' => '10%',     // 5 days before ovulation
+    'fertile_medium' => '15%',  // 4-3 days before
+    'fertile_high' => '25%',    // 2-1 days before
+    'ovulation' => '30%',
+    'fertile_after' => '5%',    // 1-2 days after
+    'post_ovulation' => '0%',
+];
+
+/**
+ * Display labels. Each endpoint keeps the Arabic wording it has always returned, because the
+ * app may match on these strings; phase_code is the stable value to use instead.
+ */
+public const OVULATION_PHASE_LABELS = [
+    // POST /user/health/ovulation
+    'calculation' => [
+        'menstruation' => 'حيض',
+        'not_fertile' => 'غير مخصبة',
+        'fertile_low' => 'خصوبة منخفضة',
+        'fertile_medium' => 'خصوبة متوسطة',
+        'fertile_high' => 'خصوبة عالية',
+        'ovulation' => 'تبويض',
+        'fertile_after' => 'نهاية الخصوبة',
+        'post_ovulation' => 'ما بعد التبويض',
+    ],
+    // GET /user/health/ovulation/current (wording kept exactly as the app received it)
+    'calendar' => [
+        'menstruation' => 'حيض',
+        'not_fertile' => 'غير خصبة',
+        'fertile_low' => 'خصوبة منخفضة',
+        'fertile_medium' => 'خصوبة متوسطة',
+        'fertile_high' => 'خصوبة عالة',
+        'ovulation' => 'تبويض',
+        'fertile_after' => 'بداية التبويض',
+        'post_ovulation' => 'ما بعد التبويض',
+    ],
+];
+
+/**
  * حساب مرحلة اليوم ونسبة الحمل داخل الدورة
  * $dayIndex: رقم اليوم من بداية الدورة (0 = أول يوم)
  */
-public function ovulationDayPhase(int $dayIndex, Carbon $day, Carbon $ovulationDay, int $periodLength): array
+public function ovulationDayPhase(int $dayIndex, Carbon $day, Carbon $ovulationDay, int $periodLength, string $labels = 'calculation'): array
 {
     // سالب = قبل التبويض، موجب = بعد التبويض
     $daysFromOvulation = (int) $ovulationDay->diffInDays($day, false);
 
-    [$phase, $chance] = match (true) {
-        $dayIndex < $periodLength => ['حيض', '0%'],
-        $daysFromOvulation === 0 => ['تبويض', '30%'],
-        in_array($daysFromOvulation, [-1, -2], true) => ['خصوبة عالية', '25%'],
-        in_array($daysFromOvulation, [-3, -4], true) => ['خصوبة متوسطة', '15%'],
-        $daysFromOvulation === -5 => ['خصوبة منخفضة', '10%'],
-        $daysFromOvulation === 1 => ['خصوبة متوسطة', '15%'],
-        $daysFromOvulation === 2 => ['خصوبة منخفضة', '10%'],
-        $daysFromOvulation > 2 => ['ما بعد التبويض', '0%'],
-        default => ['غير مخصبة', '0%'],
+    $code = match (true) {
+        // أيام الحيض لها الأولوية حتى لو تداخلت مع نافذة الخصوبة في الدورات القصيرة
+        $dayIndex < $periodLength => 'menstruation',
+        $daysFromOvulation === 0 => 'ovulation',
+        in_array($daysFromOvulation, [-1, -2], true) => 'fertile_high',
+        in_array($daysFromOvulation, [-3, -4], true) => 'fertile_medium',
+        $daysFromOvulation === -5 => 'fertile_low',
+        in_array($daysFromOvulation, [1, 2], true) => 'fertile_after',
+        $daysFromOvulation > 2 => 'post_ovulation',
+        default => 'not_fertile',
     };
 
-    return ['phase' => $phase, 'pregnancy_chance' => $chance];
+    return [
+        'phase' => self::OVULATION_PHASE_LABELS[$labels][$code],
+        'phase_code' => $code,
+        'pregnancy_chance' => self::OVULATION_PHASE_CHANCES[$code],
+    ];
 }
 
 
@@ -162,27 +206,33 @@ public function ovulationDayPhase(int $dayIndex, Carbon $day, Carbon $ovulationD
     $weightKg = $data['unit'] === 'metric' ? $data['weight'] : $data['weight'] * 0.453592;
     $bmi = round($weightKg / ($heightMeters * $heightMeters), 1); // زي الصورة: رقم عري واحد
 
-    // وصف الحالة حسب قيمة BMI
+    // وصف الحالة حسب قيمة BMI (تصنيف منظمة الصحة العالمية للبالغين)
     $status = '';
     $description = '';
 
     if ($bmi < 18.5) {
         $status = 'نقص في الوزن';
+        $statusCode = 'underweight';
         $description = 'مؤشر كتل الجسم الخاص بك أل من 18.5، وهذا يعني أن وزنك أقل من الطبيعي. يُفضل مراجعة طبيب.';
     } elseif ($bmi < 25) {
         $status = 'وزن طبيعي';
+        $statusCode = 'normal';
         $description = 'وزنك ضمن النطاق الصحي. اتسمر في الحفاظ على أسلوب حياة متوازن.';
     } elseif ($bmi < 30) {
         $status = 'زيادة في الوزن';
+        $statusCode = 'overweight';
         $description = 'مؤشر كتلة الجسم بين 25 و30 يشير إلى زيادة في الوزن،  قد يؤدي لمشاكل صحية لاحقًا.';
     } elseif ($bmi < 35) {
         $status = 'سمنة من الدرجة الاولى';
+        $statusCode = 'obese_class_1';
         $description = 'وزنك يُصنف كسمنة من الدرجة الأولى. يُنصح باتباع نظام غذائي صحي.';
     } elseif ($bmi < 40) {
         $status = 'سمنة من الدرجة الثانية';
+        $statusCode = 'obese_class_2';
         $description = 'سمنة متوسطة، ُيفضل مراجعة مختص تغذية واتباع خطة صحية.';
     } else {
         $status = 'سمنة من الدرجة الثالثة';
+        $statusCode = 'obese_class_3';
         $description = 'سمنة مفرطة. يُنصح بمراجعة الطبيب لاتخاذ خطوات تحسين صحتك.';
     }
 
@@ -208,6 +258,7 @@ public function ovulationDayPhase(int $dayIndex, Carbon $day, Carbon $ovulationD
         'data' => [
             'bmi' => $bmi,
             'status' => $status,
+            'status_code' => $statusCode,
             'description' => $description,
             'ideal_range' => $idealRange,
         ],
@@ -219,7 +270,7 @@ public function ovulationDayPhase(int $dayIndex, Carbon $day, Carbon $ovulationD
     $data['user_id'] = $userId;
     $record = BloodSugarMeasurement::create($data);
 
-    $evaluation = $this->evaluateBloodSugar($data['value'], $data['condition_type']);
+    ['label' => $evaluation, 'code' => $evaluationCode] = $this->evaluateBloodSugar($data['value'], $data['condition_type']);
 
     return [
         'message' => 'تم تسجيل قياس السكر بنجاح',
@@ -227,12 +278,24 @@ public function ovulationDayPhase(int $dayIndex, Carbon $day, Carbon $ovulationD
             'value' => $record->value,
             'condition_type' => $record->condition_type,
             'measured_at' => $record->measured_at,
-            'evaluation' => $evaluation
+            'evaluation' => $evaluation,
+            'evaluation_code' => $evaluationCode,
         ]
     ];
 }
 
-private function evaluateBloodSugar($value, $condition)
+public const BLOOD_SUGAR_LABELS = [
+    'low' => 'منخفض',
+    'normal' => 'طبيعي',
+    'high' => 'مرتفع',
+    'unknown' => 'غير معروف',
+];
+
+/**
+ * mg/dL, ADA Standards of Care: below 70 is hypoglycaemia at any time; fasting normal is
+ * below 100; 2 hours after a meal normal is below 140; a random value of 200+ is high.
+ */
+private function evaluateBloodSugar($value, $condition): array
 {
     // ترجمة القيم القدمة من اواجهة الإنجليزية إلى العربية
     $condition = match($condition) {
@@ -244,23 +307,16 @@ private function evaluateBloodSugar($value, $condition)
         default => $condition
     };
 
-    // أقل من 70 هبوط في السكر في أي حالة
-    if ($value < 70 && in_array($condition, ['قبل الإفطار', 'قبل الأكل', 'صائم', 'بعد الأكل', 'عشوائي'], true)) {
-        return 'منخفض';
-    }
+    $code = match (true) {
+        // أقل من 70 هبوط في السكر في أي حالة
+        $value < 70 => 'low',
+        in_array($condition, ['قبل الإفطار', 'قبل الأكل', 'صائم'], true) => $value < 100 ? 'normal' : 'high',
+        $condition === 'بعد الأكل' => $value < 140 ? 'normal' : 'high',
+        $condition === 'عشوائي' => $value < 200 ? 'normal' : 'high',
+        default => 'unknown',
+    };
 
-    switch ($condition) {
-        case 'قبل الإفطار':
-        case 'قبل الأكل':
-        case 'صائم':
-            return $value <= 99 ? 'طبيعي' : 'مرتفع';
-        case 'بعد الأكل':
-            return $value < 140 ? 'طبيعي' : 'مرتفع';
-        case 'عشوائي':
-            return $value < 200 ? 'طبيعي' : 'مرتفع';
-        default:
-            return 'غير معروف';
-    }
+    return ['label' => self::BLOOD_SUGAR_LABELS[$code], 'code' => $code];
 }
 
 
@@ -305,12 +361,7 @@ private function evaluateBloodSugar($value, $condition)
     $data['user_id'] = $userId;
     $record = BloodPressureMeasurement::create($data);
 
-    // تعديل: مر نوع الحالة إلى لتييم
-    $evaluation = $this->evaluateBloodPressure(
-        $data['systolic'],
-        $data['diastolic'],
-        $data['condition_type'] ?? null
-    );
+    ['label' => $evaluation, 'code' => $evaluationCode] = $this->evaluateBloodPressure($data['systolic'], $data['diastolic']);
 
     return [
         'message' => 'تم تسجيل قياس ضغط الدم بنجاح',
@@ -319,32 +370,42 @@ private function evaluateBloodSugar($value, $condition)
             'diastolic' => $record->diastolic,
             'condition_type' => $record->condition_type,
             'measured_at' => $record->measured_at,
-            'evaluation' => $evaluation
+            'evaluation' => $evaluation,
+            'evaluation_code' => $evaluationCode,
         ]
     ];
 }
 
-private function evaluateBloodPressure($systolic, $diastolic, $conditionType = null)
+/**
+ * Labels the app has always received. "elevated" keeps its original wording and a crisis
+ * reading keeps the stage 2 wording; evaluation_code tells them apart.
+ */
+public const BLOOD_PRESSURE_LABELS = [
+    'hypertensive_crisis' => 'ضغط مرتفع (المرحلة الثانية)',
+    'stage_2' => 'ضغط مرتفع (المرحلة الثانية)',
+    'stage_1' => 'ضغط مرتفع (المرحلة الأولى)',
+    'low' => 'ضغط منخفض',
+    'elevated' => 'غير منتظم - يحتاج قييم إضافي',
+    'normal' => 'طبيعي',
+];
+
+/**
+ * mmHg, 2017 ACC/AHA categories; the higher category of the two numbers wins. Low is below
+ * 90 systolic or below 60 diastolic. Readings are classified as measured: the guideline has
+ * no allowance for meals, so condition_type does not change the result.
+ */
+private function evaluateBloodPressure($systolic, $diastolic): array
 {
-    $isAfterMeal = in_array($conditionType, ['بعد الأكل', 'after_meal'], true);
+    $code = match (true) {
+        $systolic > 180 || $diastolic > 120 => 'hypertensive_crisis',
+        $systolic >= 140 || $diastolic >= 90 => 'stage_2',
+        $systolic >= 130 || $diastolic >= 80 => 'stage_1',
+        $systolic < 90 || $diastolic < 60 => 'low',
+        $systolic >= 120 => 'elevated',
+        default => 'normal',
+    };
 
-    // السماح بهامش بسيط بعد الأكل
-    $adjustment = $isAfterMeal ? -5 : 0;
-
-    $adjustedSystolic = $systolic + $adjustment;
-    $adjustedDiastolic = $diastolic + $adjustment;
-
-    if ($adjustedSystolic >= 140 || $adjustedDiastolic >= 90) {
-        return 'ضغط مرتفع (المرحلة الثانية)';
-    } elseif ($adjustedSystolic >= 130 || $adjustedDiastolic >= 80) {
-        return 'ضغط مرتفع (المرحلة الأولى)';
-    } elseif ($adjustedSystolic < 90 || $adjustedDiastolic < 60) {
-        return 'ضغط منخفض';
-    } elseif ($adjustedSystolic >= 120) {
-        return 'ضغط مرتفع قليلاً';
-    } else {
-        return 'طبيعي';
-    }
+    return ['label' => self::BLOOD_PRESSURE_LABELS[$code], 'code' => $code];
 }
 
  public function calculatePregnancy($userId, array $data)
@@ -373,23 +434,25 @@ public function recalculatePregnancyFromStoredData(PregnancyCalculation $pregnan
 
 private function buildPregnancyResult(Carbon $lastPeriod): array
 {
-    $today = Carbon::today();
+    // "اليوم" بتوقيت الصيدلية وليس UTC، حتى لا يتأخر الأسبوع يومًا بعد منتصف الليل المحلي
+    $today = StoreClock::now()->startOfDay();
 
     if ($lastPeriod->greaterThan($today)) {
-        return ['message' => 'تاريخ آخر دورة لا يمكن أن يكون في المستقبل. برجاء إدخال تاريخ صحيح.'];
+        return ['message' => 'تاريخ آخر دورة لا يمكن أن يكون في المستقبل. برجاء إدخال تاريخ صحيح.', 'code' => 'future_date'];
     }
 
-    // تاريخ الولادة المتوقع
+    // تاريخ الولادة المتوقع (قاعدة نايجل: أول يوم في آخر دورة + 280 يومًا)
     $dueDate = $lastPeriod->copy()->addDays(280);
 
-    // فرق الأيام والأسابيع (الأسبوع الحالي = عدد الأسابيع المكتملة + 1)
+    // عمر الحمل من أول يوم في آخر دورة. الأسبوع الحالي = عدد الأسابيع المكتملة + 1
     $diffInDays = (int) $lastPeriod->diffInDays($today);
-    $currentWeek = intdiv($diffInDays, 7) + 1;
+    $completedWeeks = intdiv($diffInDays, 7);
+    $currentWeek = $completedWeeks + 1;
     $currentDay = $diffInDays % 7;
 
-    // ⛔ لو الحمل عدى 41 أسبوع → نوقف هنا
-    if ($currentWeek > 41) {
-        return ['message' => 'من المفترض أن الحمل قد انتهى. يُرجى مراجعة الطبيب للتأكد من الحالة.'];
+    // ⛔ من 42 أسبوعًا مكتملًا (ما بعد موعد الولادة) → نوقف هنا. 41 أسبوعًا ما زال حملًا متأخرًا طبيعيًا
+    if ($completedWeeks >= 42) {
+        return ['message' => 'من المفترض أن الحمل قد انتهى. يُرجى مراجعة الطبيب للتأكد من الحالة.', 'code' => 'pregnancy_ended'];
     }
 
     // تحديد رقم الشهر بناءً على الأسبوع الحالي
@@ -431,14 +494,15 @@ private function buildPregnancyResult(Carbon $lastPeriod): array
 
     $monthInfo = "اليوم {$dayInWeek} من الأسبوع {$weekInMonth} في الشهر {$monthNumber}";
 
-    // حجم الجنين
+    // حجم الجنين: كل صف يغطي الأسابيع حتى رقمه (قيم تقريبية لمتوسط النمو)
     $babySizes = [
         5 => ['size' => 'بحجم بذرة سمسم', 'weight' => '0.1 جم', 'length' => '0.1 سم'],
         10 => ['size' => 'بحجم برقوق', 'weight' => '5 جم', 'length' => '3.1 سم'],
         20 => ['size' => 'بحجم موزة', 'weight' => '300 جم', 'length' => '25 سم'],
         25 => ['size' => 'بحجم كوسة', 'weight' => '0.8 كجم', 'length' => '35 سم'],
-        30 => ['size' => 'بحجم باذنجانة كبيرة', 'weight' => '0.9 كجم', 'length' => '38 سم'],
-        41 => ['size' => 'بحجم بطيخة', 'weight' => '3.5 كجم', 'length' => '51 سم'],
+        30 => ['size' => 'بحجم باذنجانة كبيرة', 'weight' => '1.3 كجم', 'length' => '40 سم'],
+        35 => ['size' => 'بحجم أناناسة', 'weight' => '2.4 كجم', 'length' => '46 سم'],
+        42 => ['size' => 'بحجم بطيخة', 'weight' => '3.5 كجم', 'length' => '51 سم'],
     ];
 
     $babyInfo = ['size' => 'غير متاح', 'weight' => 'غير متاح', 'length' => 'غير متاح'];
@@ -449,11 +513,11 @@ private function buildPregnancyResult(Carbon $lastPeriod): array
         }
     }
 
-    // صورة المرحلة ومرحلة الثلث
-    if ($currentWeek <= 13) {
+    // صورة المرحلة ومرحلة الثلث (ACOG: الأول حتى 13 أسبوعًا و6 أيام، الثاني حتى 27 أسبوعًا و6 أيام)
+    if ($completedWeeks <= 13) {
         $imageStage = 1;
         $trimester = 'الثلث الأول';
-    } elseif ($currentWeek <= 27) {
+    } elseif ($completedWeeks <= 27) {
         $imageStage = 2;
         $trimester = 'الثلث الثاني';
     } else {
@@ -475,6 +539,7 @@ private function buildPregnancyResult(Carbon $lastPeriod): array
         'baby_length' => $babyInfo['length'],
         'image_stage' => $imageStage,
         'trimester' => $trimester,
+        'trimester_number' => $imageStage,
         'summary' => $summary,
     ];
 }

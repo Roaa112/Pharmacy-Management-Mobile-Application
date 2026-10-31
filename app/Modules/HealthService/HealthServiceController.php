@@ -17,6 +17,7 @@ use App\Models\BloodPressureMeasurement;
 use App\Models\VaccinationSchedule;
 use App\Http\Controllers\Controller;
 use App\Modules\HealthService\Services\HealthService;
+use App\Support\StoreClock;
 
 class HealthServiceController extends Controller
 {
@@ -160,7 +161,8 @@ class HealthServiceController extends Controller
         $cycleLength = (int) $result->cycle_length;
         $periodLength = (int) ($result->result['period_length'] ?? 5);
 
-        $today = now()->startOfDay();
+        // اليوم بتوقيت الصيدلية (وليس UTC) حتى يتغير "اليوم" عند منتصف الليل المحلي
+        $today = StoreClock::now()->startOfDay();
 
         // الشهور اللي عايزين نجيبها (السابق / الحالي / القادم)
         $rangeStart = $today->copy()->subMonthNoOverflow()->startOfMonth();
@@ -183,7 +185,7 @@ class HealthServiceController extends Controller
                     continue;
                 }
 
-                $info = $this->healthService->ovulationDayPhase($i, $day, $ovulationDay, $periodLength);
+                $info = $this->healthService->ovulationDayPhase($i, $day, $ovulationDay, $periodLength, 'calendar');
                 $isToday = $day->isSameDay($today);
 
                 if ($isToday) {
@@ -194,6 +196,7 @@ class HealthServiceController extends Controller
                     'date' => $day->format('Y-m-d'),
                     'month' => $day->format('Y-m'),
                     'phase' => $info['phase'],
+                    'phase_code' => $info['phase_code'],
                     'pregnancy_chance' => $info['pregnancy_chance'],
                     'is_today' => $isToday,
                 ];
@@ -208,6 +211,7 @@ class HealthServiceController extends Controller
             'today' => [
                 'date' => $today->toDateString(),
                 'phase' => $todayInfo['phase'] ?? 'غير معروف',
+                'phase_code' => $todayInfo['phase_code'] ?? 'unknown',
                 'pregnancy_chance' => $todayInfo['pregnancy_chance'] ?? '0%',
             ],
         ];
@@ -257,7 +261,8 @@ class HealthServiceController extends Controller
     public function storePregnancy(Request $request)
     {
         $data = $request->validate([
-            'last_period_date' => 'required|date|before_or_equal:today',
+            // "today" on the pharmacy's clock, so a local date entered after midnight is not "future".
+            'last_period_date' => 'required|date|before_or_equal:' . StoreClock::now()->toDateString(),
         ]);
         return response()->json(
             $this->healthService->calculatePregnancy($request->user()->id, $data)
