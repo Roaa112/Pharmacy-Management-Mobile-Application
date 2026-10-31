@@ -68,9 +68,9 @@ public function getWeightData($userId)
     }
 public function calculateOvulation($userId, array $validated)
 {
-    $startDate = Carbon::parse($validated['start_day_of_cycle']);
-    $cycleLength = $validated['cycle_length'];
-    $periodLength = $validated['period_length'];
+    $startDate = Carbon::parse($validated['start_day_of_cycle'])->startOfDay();
+    $cycleLength = (int) $validated['cycle_length'];
+    $periodLength = (int) $validated['period_length'];
 
     $ovulationDay = $startDate->copy()->addDays($cycleLength - 14);
     $fertileStart = $ovulationDay->copy()->subDays(5);
@@ -81,48 +81,7 @@ public function calculateOvulation($userId, array $validated)
 
     for ($i = 0; $i < $cycleLength; $i++) {
         $day = $startDate->copy()->addDays($i);
-        $phase = 'غير مخصبة';
-        $chance = '0%';
-
-  if ($i < $periodLength) {
-    $phase = 'حيض';
-} elseif ($day->between($fertileStart, $fertileEnd)) {
-    $daysFromOvulation = $day->diffInDays($ovulationDay, false);
-
-    if ($day->equalTo($fertileStart)) {
-        $phase = 'بداية الخصوبة';
-        $chance = '5%';
-    } elseif ($day->equalTo($ovulationDay)) {
-        $phase = 'تبويض';
-        $chance = '30%';
-    } elseif ($daysFromOvulation == -5) {
-        $phase = 'خصوبة مخفضة';
-        $chance = '10%';
-    } elseif ($daysFromOvulation == -4 || $daysFromOvulation == -3) {
-        $phase = 'خصوبة متوسطة';
-        $chance = '15%';
-    } elseif ($daysFromOvulation == -2 || $daysFromOvulation == -1) {
-        $phase = 'خصوبة عالية';
-        $chance = '25%';
-    } elseif ($daysFromOvulation == 1) {
-        $phase = 'خصوبة متوسطة';
-        $chance = '15%';
-    } elseif ($daysFromOvulation == 2) {
-        $phase = 'خصوبة منخفضة';
-        $chance = '10%';
-    } elseif ($day->equalTo($fertileEnd) || $day->equalTo($fertileEnd->copy()->subDay())) {
-        $phase = 'نهاية الخصوبة';
-        $chance = '5%';
-    } else {
-        // fallback لو ايوم جوه الفترة الخصبة ومش اتصنف
-        $phase = 'خصوبة منخفضة';
-        $chance = '10%';
-    }
-} elseif ($day->greaterThan($fertileEnd)) {
-    $phase = 'ما بعد التبويض';
-}
-
-
+        ['phase' => $phase, 'pregnancy_chance' => $chance] = $this->ovulationDayPhase($i, $day, $ovulationDay, $periodLength);
 
         $formattedDate = $day->format('Y-m-d');
 
@@ -170,6 +129,30 @@ $nextPeriodStart = $startDate->copy()->addDays($cycleLength);
     ],
 ];
 
+}
+
+/**
+ * حساب مرحلة اليوم ونسبة الحمل داخل الدورة
+ * $dayIndex: رقم اليوم من بداية الدورة (0 = أول يوم)
+ */
+public function ovulationDayPhase(int $dayIndex, Carbon $day, Carbon $ovulationDay, int $periodLength): array
+{
+    // سالب = قبل التبويض، موجب = بعد التبويض
+    $daysFromOvulation = (int) $ovulationDay->diffInDays($day, false);
+
+    [$phase, $chance] = match (true) {
+        $dayIndex < $periodLength => ['حيض', '0%'],
+        $daysFromOvulation === 0 => ['تبويض', '30%'],
+        in_array($daysFromOvulation, [-1, -2], true) => ['خصوبة عالية', '25%'],
+        in_array($daysFromOvulation, [-3, -4], true) => ['خصوبة متوسطة', '15%'],
+        $daysFromOvulation === -5 => ['خصوبة منخفضة', '10%'],
+        $daysFromOvulation === 1 => ['خصوبة متوسطة', '15%'],
+        $daysFromOvulation === 2 => ['خصوبة منخفضة', '10%'],
+        $daysFromOvulation > 2 => ['ما بعد التبويض', '0%'],
+        default => ['غير مخصبة', '0%'],
+    };
+
+    return ['phase' => $phase, 'pregnancy_chance' => $chance];
 }
 
 
@@ -255,15 +238,22 @@ private function evaluateBloodSugar($value, $condition)
     $condition = match($condition) {
         'fasting' => 'صائم',
         'before_breakfast' => 'قبل الإفطار',
+        'before_meal' => 'قبل الأكل',
         'after_meal' => 'بعد الأكل',
         'random' => 'عشوائي',
         default => $condition
     };
 
+    // أقل من 70 هبوط في السكر في أي حالة
+    if ($value < 70 && in_array($condition, ['قبل الإفطار', 'قبل الأكل', 'صائم', 'بعد الأكل', 'عشوائي'], true)) {
+        return 'منخفض';
+    }
+
     switch ($condition) {
         case 'قبل الإفطار':
+        case 'قبل الأكل':
         case 'صائم':
-            return $value < 70 ? 'منخفض' : ($value <= 99 ? 'طبيعي' : 'مرتفع');
+            return $value <= 99 ? 'طبيعي' : 'مرتفع';
         case 'بعد الأكل':
             return $value < 140 ? 'طبيعي' : 'مرتفع';
         case 'عشوائي':
@@ -336,234 +326,119 @@ private function evaluateBloodSugar($value, $condition)
 
 private function evaluateBloodPressure($systolic, $diastolic, $conditionType = null)
 {
-    // السماح بهمش بسيط بعد الأكل
-    $systolicAdjustment = ($conditionType === 'بعد اأكل') ? -5 : 0;
-    $diastolicAdjustment = ($conditionType === 'بعد الأكل') ? -5 : 0;
+    $isAfterMeal = in_array($conditionType, ['بعد الأكل', 'after_meal'], true);
 
-    $adjustedSystolic = $systolic + $systolicAdjustment;
-    $adjustedDiastolic = $diastolic + $diastolicAdjustment;
+    // السماح بهامش بسيط بعد الأكل
+    $adjustment = $isAfterMeal ? -5 : 0;
 
-    if ($adjustedSystolic < 90 && $adjustedDiastolic < 60) {
-        return 'ضغط منخفض';
-    } elseif ($adjustedSystolic >= 140 || $adjustedDiastolic >= 90) {
+    $adjustedSystolic = $systolic + $adjustment;
+    $adjustedDiastolic = $diastolic + $adjustment;
+
+    if ($adjustedSystolic >= 140 || $adjustedDiastolic >= 90) {
         return 'ضغط مرتفع (المرحلة الثانية)';
     } elseif ($adjustedSystolic >= 130 || $adjustedDiastolic >= 80) {
         return 'ضغط مرتفع (المرحلة الأولى)';
-    } elseif ($adjustedSystolic < 120 && $adjustedDiastolic < 80) {
-        return 'طبيعي';
+    } elseif ($adjustedSystolic < 90 || $adjustedDiastolic < 60) {
+        return 'ضغط منخفض';
+    } elseif ($adjustedSystolic >= 120) {
+        return 'ضغط مرتفع قليلاً';
     } else {
-        return 'غير منتظم - يحتاج قييم إضافي';
+        return 'طبيعي';
     }
 }
 
  public function calculatePregnancy($userId, array $data)
     {
-        $lastPeriod = Carbon::parse($data['last_period_date']);
-        $pregnancyStart = $lastPeriod;
-        $now = Carbon::now();
-        if ($lastPeriod->isFuture()) {
-            return response()->json([
-                'message' => 'تاريخ آخر دورة لا يمكن أن يكون في المستقبل. برجاء إدخال تاريخ صحيح.'
-            ], 422);
+        $lastPeriod = Carbon::parse($data['last_period_date'])->startOfDay();
+        $result = $this->buildPregnancyResult($lastPeriod);
+
+        // رسالة بدل النتيجة (تاريخ في المستقبل أو الحمل انتهى)
+        if (isset($result['message'])) {
+            return $result;
         }
-        // تاريخ الولادة المتوقع
-        $dueDate = $lastPeriod->copy()->addDays(280);
-
-        // فرق الأيام والأسابيع
-        $diffInDays = $pregnancyStart->diffInDays($now);
-        $currentWeek = intdiv($diffInDays, 7) + 1;
-        $currentDay = $diffInDays % 7;
-
-        // ⛔ لو الحمل عدى 41 أسبوع → نوقف هنا
-        if ($currentWeek > 41) {
-            return response()->json([
-                'message' => 'من المفترض أن الحمل قد انتهى. يُرجى مراجعة الطبيب للتأكد من الحالة.'
-            ], 200);
-        }
-
-
-// تحديد رقم الشهر بناءً على الأسبوع الحالي
-if ($currentWeek <= 4) {
-    $monthNumber = 1;
-} elseif ($currentWeek <= 8) {
-    $monthNumber = 2;
-} elseif ($currentWeek <= 13) {
-    $monthNumber = 3;
-} elseif ($currentWeek <= 18) {
-    $monthNumber = 4;
-} elseif ($currentWeek <= 22) {
-    $monthNumber = 5;
-} elseif ($currentWeek <= 27) {
-    $monthNumber = 6;
-} elseif ($currentWeek <= 31) {
-    $monthNumber = 7;
-} elseif ($currentWeek <= 35) {
-    $monthNumber = 8;
-} else {
-    $monthNumber = 9;
-}
-
-// نحسب ترتيب الأسبوع داخل الشهر بناءً على النطاقات الفعلية
-$monthStartWeeks = [
-    1 => 1,
-    2 => 5,
-    3 => 9,
-    4 => 14,
-    5 => 19,
-    6 => 23,
-    7 => 28,
-    8 => 32,
-    9 => 36,
-];
-
-$weekInMonth = $currentWeek - $monthStartWeeks[$monthNumber] + 1;
-if ($weekInMonth < 1) $weekInMonth = 1;
-
-$dayInWeek = $currentDay + 1;
-
-$monthInfo = "اليوم {$dayInWeek} من الأسبوع {$weekInMonth} في الشهر {$monthNumber}";
-
-        // حجم الجنين
-        $babySizes = [
-           5 => ['size' => 'بحجم بذرة سمسم', 'weight' => '0.1 جم', 'length' => '0.1 سم'],
-    10 => ['size' => 'بحجم برقوق', 'weight' => '5 جم', 'length' => '3.1 سم'],
-    20 => ['size' => 'بحجم موزة', 'weight' => '300 جم', 'length' => '25 سم'],
-    25 => ['size' => 'بحجم كوسة', 'weight' => '0.8 كجم', 'length' => '35 سم'],
-    30 => ['size' => 'بحجم باذنجانة كبيرة', 'weight' => '0.9 كجم', 'length' => '38 سم'],
-    40 => ['size' => 'بحجم بطيخة', 'weight' => '3.5 كجم', 'length' => '51 سم'],
-        ];
-
-        $babyInfo = ['size' => 'غير متاح', 'weight' => 'غير متاح', 'length' => 'غير متاح'];
-        foreach ($babySizes as $week => $info) {
-            if ($currentWeek <= $week) {
-                $babyInfo = $info;
-                break;
-            }
-        }
-
-        // صورة المرحلة
-        if ($currentWeek >= 1 && $currentWeek <= 13) {
-            $imageStage = 1;
-        } elseif ($currentWeek >= 14 && $currentWeek <= 27) {
-            $imageStage = 2;
-        } else {
-            $imageStage = 3;
-        }
-
-        // ✅ مرحلة الثلث
-        if ($currentWeek <= 13) {
-            $trimester = 'الثلث الأول';
-        } elseif ($currentWeek <= 27) {
-            $trimester = 'الثلث الثاني';
-        } else {
-            $trimester = 'الثلث الثالث';
-        }
-
-
-
-        // باقي الكود بعد التحقق
-
-
-        // ✅ ملخص الحالة برسالة ودية
-        $summary = "أنتِ الآن في الأسبوع {$currentWeek} من حملك، الجنين {$babyInfo['size']} تقريبًا، ووزنه حوالي {$babyInfo['weight']}.";
-
-        // ✅ تجميع البيانات
-        $result = [
-            'last_period_date' => $lastPeriod->toDateString(),
-            'due_date' => $dueDate->toDateString(),
-            'current_week' => $currentWeek,
-            'current_day' => $currentDay,
-            'month_info' => $monthInfo,
-            'baby_size' => $babyInfo['size'],
-            'baby_weight' => $babyInfo['weight'],
-            'baby_length' => $babyInfo['length'],
-            'image_stage' => $imageStage,
-            'trimester' => $trimester,       // ✅ مرحلة الثلث
-            'summary' => $summary,           // ✅ الملخص
-        ];
 
         // ✅ الحفظ في الداتابيز
         return PregnancyCalculation::create([
             'user_id' => $userId,
             'last_period_date' => $lastPeriod,
-            'due_date' => $dueDate,
+            'due_date' => $result['due_date'],
             'result' => $result,
         ]);
     }
 
-
-
 public function recalculatePregnancyFromStoredData(PregnancyCalculation $pregnancy)
 {
-    $lastPeriod = $pregnancy->last_period_date;
-    $now = Carbon::now();
- if ($lastPeriod->isFuture()) {
-        return response()->json([
-            'message' => 'تاريخ آخر دورة لا يمكن أن يكون في المستقبل. برجاء إدخال تاريخ صحيح.'
-        ], 422);
-    }
-    $dueDate = $lastPeriod->copy()->addDays(280);
-
-    $diffInDays = $lastPeriod->diffInDays($now);
-    $currentWeek = max(1, intdiv($diffInDays, 7));
-    $currentDay = $diffInDays % 7;
-   // ⛔ لو الحمل عدى 41 أسبوع → نوقف هنا
-        if ($currentWeek > 41) {
-            return response()->json([
-                'message' => 'من المفترض أن الحمل قد انتهى. يُرجى مراجعة الطبيب للتأكد من الحالة.'
-            ], 200);
-        }
-
-
-// تحديد رقم الشهر بناءً على الأسبوع الحالي
-if ($currentWeek <= 4) {
-    $monthNumber = 1;
-} elseif ($currentWeek <= 8) {
-    $monthNumber = 2;
-} elseif ($currentWeek <= 13) {
-    $monthNumber = 3;
-} elseif ($currentWeek <= 18) {
-    $monthNumber = 4;
-} elseif ($currentWeek <= 22) {
-    $monthNumber = 5;
-} elseif ($currentWeek <= 27) {
-    $monthNumber = 6;
-} elseif ($currentWeek <= 31) {
-    $monthNumber = 7;
-} elseif ($currentWeek <= 35) {
-    $monthNumber = 8;
-} else {
-    $monthNumber = 9;
+    return $this->buildPregnancyResult($pregnancy->last_period_date->copy()->startOfDay());
 }
 
-// نحسب ترتيب الأسبوع داخل الشهر بناءً على النطاقات الفعلية
-$monthStartWeeks = [
-    1 => 1,
-    2 => 5,
-    3 => 9,
-    4 => 14,
-    5 => 19,
-    6 => 23,
-    7 => 28,
-    8 => 32,
-    9 => 36,
-];
+private function buildPregnancyResult(Carbon $lastPeriod): array
+{
+    $today = Carbon::today();
 
-$weekInMonth = $currentWeek - $monthStartWeeks[$monthNumber] + 1;
-if ($weekInMonth < 1) $weekInMonth = 1;
+    if ($lastPeriod->greaterThan($today)) {
+        return ['message' => 'تاريخ آخر دورة لا يمكن أن يكون في المستقبل. برجاء إدخال تاريخ صحيح.'];
+    }
 
-$dayInWeek = $currentDay + 1;
+    // تاريخ الولادة المتوقع
+    $dueDate = $lastPeriod->copy()->addDays(280);
 
-$monthInfo = "اليوم {$dayInWeek} من الأسبوع {$weekInMonth} في الشهر {$monthNumber}";
+    // فرق الأيام والأسابيع (الأسبوع الحالي = عدد الأسابيع المكتملة + 1)
+    $diffInDays = (int) $lastPeriod->diffInDays($today);
+    $currentWeek = intdiv($diffInDays, 7) + 1;
+    $currentDay = $diffInDays % 7;
 
+    // ⛔ لو الحمل عدى 41 أسبوع → نوقف هنا
+    if ($currentWeek > 41) {
+        return ['message' => 'من المفترض أن الحمل قد انتهى. يُرجى مراجعة الطبيب للتأكد من الحالة.'];
+    }
 
+    // تحديد رقم الشهر بناءً على الأسبوع الحالي
+    if ($currentWeek <= 4) {
+        $monthNumber = 1;
+    } elseif ($currentWeek <= 8) {
+        $monthNumber = 2;
+    } elseif ($currentWeek <= 13) {
+        $monthNumber = 3;
+    } elseif ($currentWeek <= 18) {
+        $monthNumber = 4;
+    } elseif ($currentWeek <= 22) {
+        $monthNumber = 5;
+    } elseif ($currentWeek <= 27) {
+        $monthNumber = 6;
+    } elseif ($currentWeek <= 31) {
+        $monthNumber = 7;
+    } elseif ($currentWeek <= 35) {
+        $monthNumber = 8;
+    } else {
+        $monthNumber = 9;
+    }
+
+    // نحسب ترتيب الأسبوع داخل الشهر بناءً على النطاقات الفعلية
+    $monthStartWeeks = [
+        1 => 1,
+        2 => 5,
+        3 => 9,
+        4 => 14,
+        5 => 19,
+        6 => 23,
+        7 => 28,
+        8 => 32,
+        9 => 36,
+    ];
+
+    $weekInMonth = $currentWeek - $monthStartWeeks[$monthNumber] + 1;
+    $dayInWeek = $currentDay + 1;
+
+    $monthInfo = "اليوم {$dayInWeek} من الأسبوع {$weekInMonth} في الشهر {$monthNumber}";
+
+    // حجم الجنين
     $babySizes = [
-     5 => ['size' => 'بحجم بذرة سمسم', 'weight' => '0.1 جم', 'length' => '0.1 سم'],
-    10 => ['size' => 'بحجم برقوق', 'weight' => '5 جم', 'length' => '3.1 سم'],
-    20 => ['size' => 'بحجم موزة', 'weight' => '300 جم', 'length' => '25 سم'],
-    25 => ['size' => 'بحجم كوسة', 'weight' => '0.8 كجم', 'length' => '35 سم'],
-    30 => ['size' => 'بحجم باذنجانة كبيرة', 'weight' => '0.9 كجم', 'length' => '38 سم'],
-    40 => ['size' => 'بحجم بطيخة', 'weight' => '3.5 كجم', 'length' => '51 سم'],
+        5 => ['size' => 'بحجم بذرة سمسم', 'weight' => '0.1 جم', 'length' => '0.1 سم'],
+        10 => ['size' => 'بحجم برقوق', 'weight' => '5 جم', 'length' => '3.1 سم'],
+        20 => ['size' => 'بحجم موزة', 'weight' => '300 جم', 'length' => '25 سم'],
+        25 => ['size' => 'بحجم كوسة', 'weight' => '0.8 كجم', 'length' => '35 سم'],
+        30 => ['size' => 'بحجم باذنجانة كبيرة', 'weight' => '0.9 كجم', 'length' => '38 سم'],
+        41 => ['size' => 'بحجم بطيخة', 'weight' => '3.5 كجم', 'length' => '51 سم'],
     ];
 
     $babyInfo = ['size' => 'غير متاح', 'weight' => 'غير متاح', 'length' => 'غير متاح'];
@@ -574,28 +449,22 @@ $monthInfo = "اليوم {$dayInWeek} من الأسبوع {$weekInMonth} في ا
         }
     }
 
-    // صورة المرحلة
-    if ($currentWeek >= 1 && $currentWeek <= 13) {
-        $imageStage = 1;
-    } elseif ($currentWeek >= 14 && $currentWeek <= 27) {
-        $imageStage = 2;
-    } else {
-        $imageStage = 3;
-    }
-
-    // تحديد الثلث الحالي
+    // صورة المرحلة ومرحلة الثلث
     if ($currentWeek <= 13) {
+        $imageStage = 1;
         $trimester = 'الثلث الأول';
     } elseif ($currentWeek <= 27) {
+        $imageStage = 2;
         $trimester = 'الثلث الثاني';
     } else {
+        $imageStage = 3;
         $trimester = 'الثلث الثالث';
     }
 
-    // ملخص ودي
+    // ✅ ملخص الحالة برسالة ودية
     $summary = "أنتِ الآن في الأسبوع {$currentWeek} من حملك، الجنين {$babyInfo['size']} تقريبًا، ووزنه حوالي {$babyInfo['weight']}.";
 
-    $result = [
+    return [
         'last_period_date' => $lastPeriod->toDateString(),
         'due_date' => $dueDate->toDateString(),
         'current_week' => $currentWeek,
@@ -608,8 +477,6 @@ $monthInfo = "اليوم {$dayInWeek} من الأسبوع {$weekInMonth} في ا
         'trimester' => $trimester,
         'summary' => $summary,
     ];
-
-    return $result;
 }
 
 

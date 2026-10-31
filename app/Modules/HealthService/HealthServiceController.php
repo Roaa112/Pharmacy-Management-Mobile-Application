@@ -156,84 +156,50 @@ class HealthServiceController extends Controller
             return ['message' => 'محتاج تدخل بيانات الدورة لأول مرة'];
         }
 
-        $startDate = $result->start_day_of_cycle->copy();
-        $cycleLength = $result->cycle_length;
-        $periodLength = $result->period_length ?? 5;
+        $startDate = $result->start_day_of_cycle->copy()->startOfDay();
+        $cycleLength = (int) $result->cycle_length;
+        $periodLength = (int) ($result->result['period_length'] ?? 5);
 
         $today = now()->startOfDay();
-        $daysPassed = $today->diffInDays($startDate);
 
-        // جيب أب سايكل لليوم
-        $cyclesPassed = floor($daysPassed / $cycleLength);
-        $currentCycleStart = $startDate->copy()->addDays($cyclesPassed * $cycleLength);
+        // الشهور اللي عايزين نجيبها (السابق / الحالي / القادم)
+        $rangeStart = $today->copy()->subMonthNoOverflow()->startOfMonth();
+        $rangeEnd = $today->copy()->addMonthNoOverflow()->endOfMonth();
+
+        // بداية الدورة اللي فيها أول يوم في النطاق (موجب = بعد تاريخ البداية المسجل)
+        $cyclesUntilRange = (int) floor($startDate->diffInDays($rangeStart, false) / $cycleLength);
+        $cycleStart = $startDate->copy()->addDays($cyclesUntilRange * $cycleLength);
 
         $allDays = [];
+        $todayInfo = null;
 
-        // الشهور اللي عايي نجيها (قبل / احاي / بع)
-        $months = [
-            $today->copy()->subMonthNoOverflow(),
-            $today->copy(),
-            $today->copy()->addMonthNoOverflow(),
-        ];
+        while ($cycleStart <= $rangeEnd) {
+            $ovulationDay = $cycleStart->copy()->addDays($cycleLength - 14);
 
-        foreach ($months as $monthDate) {
-            $monthStart = $monthDate->copy()->startOfMonth();
-            $monthEnd   = $monthDate->copy()->endOfMonth();
+            for ($i = 0; $i < $cycleLength; $i++) {
+                $day = $cycleStart->copy()->addDays($i);
 
-            // نولّ أيام كل سيكل تقاع الشهر المطلوب
-            $cycleStart = $currentCycleStart->copy();
-            while ($cycleStart <= $monthEnd) {
-                $ovulationDay = $cycleStart->copy()->addDays($cycleLength - 14);
-                $fertileStart = $ovulationDay->copy()->subDays(5);
-                $fertileEnd   = $ovulationDay->copy()->addDays(2);
-
-                for ($i = 0; $i < $cycleLength; $i++) {
-                    $day = $cycleStart->copy()->addDays($i);
-
-                    if ($day < $monthStart || $day > $monthEnd) {
-                        continue; // نتكد إنه جوه الشهر
-                    }
-
-                    $phase = 'غير خصبة';
-                    $chance = '0%';
-
-                    if ($i < $periodLength) {
-                        $phase = 'حيض';
-                    } elseif ($day->between($fertileStart, $fertileEnd)) {
-                        $daysFromOvulation = $day->diffInDays($ovulationDay, false);
-
-                        if ($day->equalTo($ovulationDay)) {
-                            $phase = 'تبويض';
-                            $chance = '30%';
-                        } elseif (in_array($daysFromOvulation, [-1, -2])) {
-                            $phase = 'خصوبة عالة';
-                            $chance = '25%';
-                        } elseif (in_array($daysFromOvulation, [-3, -4])) {
-                            $phase = 'خصوبة متوسطة';
-                            $chance = '15%';
-                        } elseif ($daysFromOvulation == -5) {
-                            $phase = 'خصوبة منخفضة';
-                            $chance = '10%';
-                        } elseif (in_array($daysFromOvulation, [1, 2])) {
-                            $phase = 'بداية التبويض';
-                            $chance = '5%';
-                        }
-                    } elseif ($day->greaterThan($fertileEnd)) {
-                        $phase = 'ما بعد التبويض';
-                    }
-
-                    $allDays[] = [
-                        'date' => $day->format('Y-m-d'),
-                        'month' => $day->format('Y-m'),
-                        'phase' => $phase,
-                        'pregnancy_chance' => $chance,
-                        'is_today' => $day->isSameDay($today),
-                    ];
+                if ($day < $rangeStart || $day > $rangeEnd) {
+                    continue;
                 }
 
-                // ✅ هنا بقت في الآخر
-                $cycleStart->addDays($cycleLength);
+                $info = $this->healthService->ovulationDayPhase($i, $day, $ovulationDay, $periodLength);
+                $isToday = $day->isSameDay($today);
+
+                if ($isToday) {
+                    $todayInfo = $info;
+                }
+
+                $allDays[] = [
+                    'date' => $day->format('Y-m-d'),
+                    'month' => $day->format('Y-m'),
+                    'phase' => $info['phase'],
+                    'pregnancy_chance' => $info['pregnancy_chance'],
+                    'is_today' => $isToday,
+                ];
             }
+
+            $cycleStart->addDays($cycleLength);
         }
 
         return [
@@ -241,8 +207,8 @@ class HealthServiceController extends Controller
             'months' => collect($allDays)->groupBy('month'),
             'today' => [
                 'date' => $today->toDateString(),
-                'phase' => $allDays[array_search(true, array_column($allDays, 'is_today'))]['phase'] ?? 'غير معروف',
-                'pregnancy_chance' => $allDays[array_search(true, array_column($allDays, 'is_today'))]['pregnancy_chance'] ?? '0%',
+                'phase' => $todayInfo['phase'] ?? 'غير معروف',
+                'pregnancy_chance' => $todayInfo['pregnancy_chance'] ?? '0%',
             ],
         ];
     }
@@ -291,7 +257,7 @@ class HealthServiceController extends Controller
     public function storePregnancy(Request $request)
     {
         $data = $request->validate([
-            'last_period_date' => 'required|date',
+            'last_period_date' => 'required|date|before_or_equal:today',
         ]);
         return response()->json(
             $this->healthService->calculatePregnancy($request->user()->id, $data)
