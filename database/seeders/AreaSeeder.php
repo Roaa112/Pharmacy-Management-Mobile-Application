@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\Area;
+use App\Models\City;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -504,8 +505,15 @@ class AreaSeeder extends Seeder
 
         
 
+        // city_id above is the city's position in CitySeeder::CITIES, not a database id:
+        // look the real id up by name, so areas are right whatever ids the cities got.
+        $cityIds = City::whereIn('name', CitySeeder::CITIES)->pluck('id', 'name');
+
+        // firstOrCreate: running the seeder again does not duplicate areas.
         foreach ($areas as $area) {
-            Area::create($area);
+            $area['city_id'] = $cityIds[CitySeeder::CITIES[$area['city_id'] - 1]];
+
+            Area::firstOrCreate($area);
         }
     }
 }

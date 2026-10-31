@@ -12,11 +12,20 @@ class AdminSeeder extends Seeder
      */
     public function run(): void
     {
-        Admin::create([
+        $email = env('Admin_Email');
+        $password = env('Admin_Password');
+
+        if (!$email || !$password) {
+            $this->command?->warn('AdminSeeder skipped: set Admin_Email and Admin_Password in .env.');
+
+            return;
+        }
+
+        // An existing admin with this email is left as it is (its password is not reset).
+        Admin::firstOrCreate(['email' => $email], [
             'name' => 'Super Admin',
-            'email' => env('Admin_Email'),
             'phone' => '1234567890',
-            'password' => env('Admin_Password'), 
+            'password' => $password,
         ]);
     }
 }

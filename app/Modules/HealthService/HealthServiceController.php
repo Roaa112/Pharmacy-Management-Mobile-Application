@@ -408,77 +408,12 @@ class HealthServiceController extends Controller
         ]);
 
         // تليد جدول اتطعيما تلقائيً
-        $this->generateDefaultVaccines($child);
+        $this->healthService->generateDefaultVaccines($child);
 
         return response()->json([
             'message' => 'تم إنشاء الطفل وجدول التطعيمات بنجاح',
             'child' => $child->load('vaccines'),
         ]);
-    }
-
-    /**
-     * إنشاء جدول التطيمات الافتراي لك طف
-     */
-    protected function generateDefaultVaccines(Child $child)
-    {
-        $defaultVaccines = [
-            [
-                'name' => 'لقاح عند الولادة',
-                'offset' => '0 days',
-                'description' => 'لقاح التهاب الكبد الفيروسي B (الجرعة الصفرية) خلال أول 24 ساعة من الولادة.'
-            ],
-            [
-                'name' => 'لقاح الأسبوع الأول',
-                'offset' => '7 days',
-                'description' => 'لقاح شلل الأطفال الفموي (الجرعة الصفرية) + لقاح السل (BCG).'
-            ],
-            [
-                'name' => 'لقاح عمر شهرين',
-                'offset' => '2 months',
-                'description' => 'الجرعة الأولى من: شلل الأطفال الفموي، شلل الأطفال العضلي، الخماسي (الدفتيريا، الكزاز، السعال الديكي، التهاب الكبد B، المستدمية النزلية)، المكورات الرئوية، والروتا.'
-            ],
-            [
-                'name' => 'لقاح عمر 4 أشهر',
-                'offset' => '4 months',
-                'description' => 'الجرعة الثانية من: شلل الأطفال الفموي، شلل الأطفال العضلي، الخماسي، المكورات الرئوية، والروتا.'
-            ],
-            [
-                'name' => 'لقاح عمر 6 أشهر',
-                'offset' => '6 months',
-                'description' => 'الجرعة الثالثة من: شلل الأطفال الفموي، شلل الأطفال العضلي، الخماسي، والروتا.'
-            ],
-            [
-                'name' => 'لقاح عمر 9 أشهر',
-                'offset' => '9 months',
-                'description' => 'جرعة منشطة من شلل الأطفال الفموي + لقاح الحصبة.'
-            ],
-            [
-                'name' => 'لقاح عمر 12 شهرًا',
-                'offset' => '12 months',
-                'description' => 'لقاح الحصبة المختلطة (حصبة، حصبة ألمانية، نكاف - MMR) + الجرعة المنشطة الأولى من المكورات الرئوية.'
-            ],
-            [
-                'name' => 'لقاح عمر 18 شهرًا',
-                'offset' => '18 months',
-                'description' => 'جرعة منشطة من: شلل الأطفال الفموي، شلل الأطفال العضلي، الثلاثي (DTaP)، والجرعة المنشطة الثانية من المكورات الرئوية.'
-            ],
-            [
-                'name' => 'لقاح عمر 4-6 سنوات',
-                'offset' => '4 years',
-                'description' => 'الجرعة المنشطة الأخيرة من: شلل الأطفال الفموي، شلل الأطفال العضلي، والثلاثي (DTaP).'
-            ],
-        ];
-
-
-        foreach ($defaultVaccines as $vaccine) {
-            Vaccine::create([
-                'child_id' => $child->id,
-                'vaccine_name' => $vaccine['name'],
-                'description' => $vaccine['description'],
-                'scheduled_date' => Carbon::parse($child->birth_date)->add($vaccine['offset']),
-                'is_completed' => false,
-            ]);
-        }
     }
 
     /**
