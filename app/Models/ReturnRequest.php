@@ -10,6 +10,21 @@ class ReturnRequest extends Model
        'user_id', 'order_id', 'reason', 'note', 'refund_amount', 'refund_method', 'address', 'status'
     ];
 
+    // approved_amount, decided_by and decided_at are deliberately not fillable:
+    // only ReturnDecisionService sets them, when the admin accepts or rejects.
+
+    protected $casts = ['decided_at' => 'datetime'];
+
+    public function items()
+    {
+        return $this->hasMany(ReturnRequestItem::class);
+    }
+
+    public function pointReversal()
+    {
+        return $this->hasOne(LoyaltyPointReversal::class);
+    }
+
     public function images()
     {
         return $this->hasMany(ReturnRequestImage::class);

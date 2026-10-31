@@ -89,6 +89,9 @@ class OrderStatusTest extends TestCase
 
     public function test_canceled_orders_do_not_count_as_valid_points(): void
     {
+        // Without a validity period (0 days) points only count within the same second,
+        // which made this test fail whenever the clock ticked (see docs/business-rules.md, D10).
+        \App\Models\Setting::create(['points_validity_days' => 30]);
         $size = $this->makeSize();
         $this->makeOrder($this->customer, $size)->update(['points_earned' => 10]);
         $this->makeOrder($this->customer, $size, status: 'canceled')->update(['points_earned' => 40]);

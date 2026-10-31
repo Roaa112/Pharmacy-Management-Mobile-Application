@@ -24,6 +24,11 @@ class Coupon extends Model
         'once_per_user' => 'boolean',
     ];
 
+    public function orders()
+    {
+        return $this->hasMany(Order::class);
+    }
+
     public function users()
     {
         return $this->belongsToMany(User::class)->withTimestamps();

@@ -1,84 +1,58 @@
-@extends('adminlte::page')
+@extends('admin.layout')
 
-@section('title', 'Dashboard')
+@section('title', 'Brands')
+@section('pretitle', 'Catalog')
+@section('subtitle', 'Brands shown on product pages and used for brand discounts.')
 
-@section('content_header')
-<h1>Dashboard</h1>
-@stop
+@section('actions')
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createbrand"><i class="ti ti-plus me-1"></i>New brand</button>
+@endsection
 
 @section('content')
 <div class="card">
-    <div class="card-header d-flex justify-content-between">
-        <h3>Brands</h3>
-        <button class="btn btn-primary" data-toggle="modal" data-target="#createBrandModal">Add Brand</button>
-
-    </div>
-    <div class="card-body">
-        <table class="table table-bordered">
-            <thead>
-                <tr>
-                    <th>Image</th>
-                    <th>Name Ar</th>
-                    <th>Name En</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($Brands as $brand)
-                <tr>
-                    <td><img src="{{ asset( $brand->image ) }}" width="80"></td>
-                
-                    <td><strong>{{ $brand->name_ar }}</strong></td>
-                    <td><strong>{{ $brand->name_en }}</strong></td>
-                    <td>
-                        
-                    <button class="btn btn-sm btn-info edit-brand-btn"
-                        data-toggle="modal"
-                        data-target="#editBrandModal{{$brand->id }}"
-                        data-id="{{$brand->id }}"
-                        data-name_ar="{{ $brand->name_ar }}"
-                        data-name_en="{{ $brand->name_en }}"
-                        data-image="{{ $brand->image }}">
-                        Edit
-                    </button>
-
-                        <form action="{{ route('dashboard.brands.destroy', $brand) }}" method="POST"
-                            class="d-inline">
-                            @csrf @method('DELETE')
-                            <button class="btn btn-sm btn-danger">Delete</button>
-                        </form>
-                    </td>
-                </tr>
-
-              
-              
-
-                <!-- Edit Modal for Parent -->
-                @include('dashboard.Brands.modals.edit', ['brand' => $brand])
-        
-
-                @empty
-                <tr>
-                    <td colspan="2">No brands found.</td>
-                </tr>
-                @endforelse
-
-            </tbody>
-        </table>
-    </div>
+    @if ($Brands->isEmpty())
+        <x-admin.empty icon="badge-tm" title="No brands yet" />
+    @else
+        <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+                <thead><tr><th>Brand</th><th>Arabic name</th><th class="w-1"></th></tr></thead>
+                <tbody>
+                @foreach ($Brands as $brand)
+                    <tr>
+                        <td>
+                            <div class="d-flex align-items-center gap-3">
+                                <x-admin.thumb :src="$brand->image ? asset($brand->image) : null" :alt="$brand->name_en" />
+                                <span class="fw-medium">{{ $brand->name_en }}</span>
+                            </div>
+                        </td>
+                        <td dir="rtl" class="text-end text-md-start">{{ $brand->name_ar }}</td>
+                        <td>
+                            <div class="btn-list flex-nowrap">
+                                <button class="btn btn-sm btn-ghost-primary btn-icon" data-bs-toggle="modal" data-bs-target="#editbrand{{ $brand->id }}" title="Edit" aria-label="Edit"><i class="ti ti-edit"></i></button>
+                                <x-admin.delete :action="route('dashboard.brands.destroy', $brand->id)" />
+                            </div>
+                        </td>
+                    </tr>
+                @endforeach
+                </tbody>
+            </table>
+        </div>
+    @endif
 </div>
-@include('dashboard.Brands.modals.create')
-@stop
+@endsection
 
+@push('modals')
+    <x-admin.modal id="createbrand" title="New brand" :action="route('dashboard.brands.store')" files submit="Create">
+        <x-admin.input name="name_en" label="Name (English)" required />
+        <x-admin.input name="name_ar" label="Name (Arabic)" required dir="rtl" />
+        <x-admin.input type="file" name="image" label="Image" accept="image/*" />
+    </x-admin.modal>
 
-
-@section('css')
-{{-- Add here extra stylesheets --}}
-{{-- <link rel="stylesheet" href="/css/admin_custom.css"> --}}
-@stop
-
-@section('js')
-<script>
-console.log("Hi, I'm using the Laravel-AdminLTE package!");
-</script>
-@stop
+    @foreach ($Brands as $brand)
+        <x-admin.modal :id="'editbrand'.$brand->id" title="Edit brand" :action="route('dashboard.brands.update', $brand->id)" method="PUT" files>
+            <x-admin.input name="name_en" label="Name (English)" :value="$brand->name_en" required />
+            <x-admin.input name="name_ar" label="Name (Arabic)" :value="$brand->name_ar" required dir="rtl" />
+            <x-admin.input type="file" name="image" label="Replace image" accept="image/*" hint="Leave empty to keep the current image." />
+        </x-admin.modal>
+    @endforeach
+@endpush

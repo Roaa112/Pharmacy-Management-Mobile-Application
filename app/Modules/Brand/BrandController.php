@@ -17,10 +17,10 @@ class BrandController extends Controller
 
     public function index(Request $request)
     {
-        $Brands = $this->brandService->listAllBrands($request->all());
+        $Brands = \App\Models\Brand::orderBy("name_en")->get();
     
         return view('dashboard.Brands.index', [
-            'Brands' => $Brands['data'], 
+            'Brands' => $Brands, 
         ]);
     }
     

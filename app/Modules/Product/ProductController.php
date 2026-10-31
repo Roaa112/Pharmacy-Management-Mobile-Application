@@ -2,6 +2,10 @@
 
 namespace App\Modules\Product;
 
+use App\Models\Brand;
+use App\Models\Category;
+use App\Models\FlashSale;
+use App\Models\HealthIssue;
 use App\Models\Product;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
@@ -35,23 +39,51 @@ class ProductController extends Controller
 
     public function index(Request $request)
     {
+        $search = trim((string) $request->query('search'));
+        $categoryId = $request->integer('category') ?: null;
+        $threshold = (int) config('pharmacy.low_stock_threshold');
 
-        $products = $this->productService->listAllProducts($request->all());
-        $brands = $this->brandService->listAllBrands($request->all());
-        $healthIssues = $this->healthIssueService->listAllHealthIssues($request->all());
-        $categories = $this->categoryService->listAllCategories($request->all());
-        $flashSales = $this->flashSaleService->listAllFlashSales($request->all());
-        // $discounts = $this->discountService->listAllDiscounts($request->all());
-
+        $products = Product::query()
+            ->withoutGlobalScope('listing_aggregates')
+            ->with(['brand:id,name_en', 'category:id,name_en', 'productImages'])
+            ->when($search !== '', fn ($q) => $q->where(fn ($q) => $q
+                ->where('name_en', 'like', "%{$search}%")
+                ->orWhere('name_ar', 'like', "%{$search}%")))
+            ->when($categoryId, fn ($q) => $q->where('category_id', $categoryId))
+            ->when($request->query('stock') === 'out', fn ($q) => $q->whereDoesntHave('sizes', fn ($s) => $s->where('stock', '>', 0)))
+            ->when($request->query('stock') === 'low', fn ($q) => $q->whereHas('sizes', fn ($s) => $s->whereBetween('stock', [1, $threshold])))
+            ->latest()
+            ->paginate(20)
+            ->withQueryString();
 
         return view('dashboard.Products.index', [
-             'products' => $products['data'],
-            'brands' => $brands['data'],
-            'healthIssues' =>  $healthIssues['data'],
-            'categories' =>  $categories['data'],
-            'flashSales' =>  $flashSales['data'],
-            // 'discounts' =>  $discounts['data'],
+            'products' => $products,
+            'search' => $search,
+            'categories' => Category::orderBy('name_en')->get(['id', 'name_en', 'parent_id']),
+            'threshold' => $threshold,
         ]);
+    }
+
+    public function create()
+    {
+        return view('dashboard.Products.form', $this->formData() + ['product' => new Product()]);
+    }
+
+    public function edit(Product $product)
+    {
+        $product->load('sizes', 'healthIssues:id', 'productImages');
+
+        return view('dashboard.Products.form', $this->formData() + ['product' => $product]);
+    }
+
+    private function formData(): array
+    {
+        return [
+            'brands' => Brand::orderBy('name_en')->get(['id', 'name_en', 'name_ar']),
+            'categories' => Category::whereNull('parent_id')->with('children:id,parent_id,name_en,name_ar')->orderBy('name_en')->get(['id', 'name_en', 'name_ar']),
+            'healthIssues' => HealthIssue::orderBy('name_en')->get(['id', 'name_en', 'name_ar']),
+            'flashSales' => FlashSale::latest('date')->get(),
+        ];
     }
 
 
@@ -61,7 +93,7 @@ class ProductController extends Controller
 
         $this->productService->handleStoreProduct($data, $request);
 
-        return redirect()->back()->with('success', 'Product created successfully!');
+        return redirect()->route('dashboard.products.index')->with('success', 'Product created successfully!');
     }
 
 

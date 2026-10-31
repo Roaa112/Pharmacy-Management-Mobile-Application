@@ -17,10 +17,10 @@ class HealthIssueController extends Controller
 
     public function index(Request $request)
     {
-        $healthIssues = $this->healthIssueService->listAllHealthIssues($request->all());
+        $healthIssues = \App\Models\HealthIssue::orderBy("name_en")->get();
     
         return view('dashboard.HealthIssues.index', [
-            'healthIssues' => $healthIssues['data'], 
+            'healthIssues' => $healthIssues, 
         ]);
     }
     

@@ -36,8 +36,9 @@ class LoginController extends Controller
      */
     public function __construct()
     {
-        $this->middleware('guest')->except('logout');
-        $this->middleware('auth')->only('logout');
+        // This login is for admins, so both checks must use the "admin" guard.
+        $this->middleware('guest:admin')->except('logout');
+        $this->middleware('auth:admin')->only('logout');
     }
 protected function guard()
 {

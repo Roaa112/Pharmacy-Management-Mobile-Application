@@ -1,71 +1,40 @@
-@extends('adminlte::page')
+@extends('admin.layout')
 
-@section('title', 'Contact Messages')
-
-@section('content_header')
-    <h1>Contact Messages</h1>
-@stop
+@section('title', 'Contact messages')
+@section('pretitle', 'Operations')
+@section('subtitle', 'Messages customers sent from the app.')
 
 @section('content')
-    <div class="card">
-        <div class="card-header">
-            <div class="row">
-                <div class="col-md-6">
-                    <h3 class="card-title">Messages List</h3>
+<div class="card">
+    @if ($ContactMessages->isEmpty())
+        <x-admin.empty icon="mail-off" title="No messages" />
+    @else
+        <div class="list-group list-group-flush">
+            @foreach ($ContactMessages as $message)
+                <div class="list-group-item">
+                    <div class="row align-items-start g-3">
+                        <div class="col-auto"><span class="avatar bg-azure-lt">{{ strtoupper(mb_substr($message->name ?: '?', 0, 1)) }}</span></div>
+                        <div class="col min-w-0">
+                            <div class="d-flex flex-wrap align-items-baseline gap-2">
+                                <span class="fw-medium">{{ $message->name }}</span>
+                                @if ($message->email)
+                                    <a href="mailto:{{ $message->email }}" class="small text-secondary">{{ $message->email }}</a>
+                                @endif
+                                @if ($message->user_id)
+                                    <a href="{{ route('dashboard.customers.show', $message->user_id) }}" class="small">View customer</a>
+                                @endif
+                                <span class="small text-secondary ms-auto">{{ $message->created_at->format('M j, Y · H:i') }}</span>
+                            </div>
+                            <p class="mt-1 mb-0 text-wrap" style="white-space: pre-line">{{ $message->message }}</p>
+                        </div>
+                        <div class="col-auto">
+                            <x-admin.delete :action="route('dashboard.contact-messages.destroy', $message->id)" confirm="Delete this message?" />
+                        </div>
+                    </div>
                 </div>
-               
-            </div>
+            @endforeach
         </div>
-        <div class="card-body">
-            @if(count($ContactMessages) > 0)
-                <div class="table-responsive">
-                    <table class="table table-bordered table-striped">
-                        <thead class="thead-dark">
-                            <tr>
-                                <th>ID</th>
-                                <th>Name</th>
-                                <th>Email</th>
-                                <th>Message</th>
-                                <th>Date</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach($ContactMessages as $message)
-                                <tr>
-                                    <td>{{ $message->id }}</td>
-                                    <td>{{ $message->name }}</td>
-                                    <td>{{ $message->email }}</td>
-                                    <td>{{ Str::limit($message->message, 70) }}</td>
-                                    <td>{{ $message->created_at->format('Y-m-d H:i') }}</td>
-                                    <td style="width: 150px;">
-                                        <div class="btn-group">
-                                            
-                                        <form action="{{ route('dashboard.contact-messages.destroy', $message->id) }}" 
-      method="POST" class="d-inline">
-    @csrf
-    @method('DELETE')
-    <button type="submit" class="btn btn-danger btn-sm" 
-            title="Delete" onclick="return confirm('Are you sure?')">
-        <i class="fas fa-trash"></i>
-    </button>
-</form>
-
-                                        </div>
-                                    </td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
-                </div>
-
-               
-            @else
-                <div class="alert alert-info">
-                    No contact messages found.
-                </div>
-            @endif
-        </div>
-    </div>
-@stop
-
+        <x-admin.pagination :paginator="$ContactMessages" />
+    @endif
+</div>
+@endsection

@@ -39,6 +39,7 @@ Schema::create('return_request_images', function (Blueprint $table) {
      */
     public function down(): void
     {
+        Schema::dropIfExists('return_request_images');
         Schema::dropIfExists('return_requests');
     }
 };

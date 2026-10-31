@@ -17,10 +17,10 @@ class FlashSaleController extends Controller
 
     public function index(Request $request)
     {
-        $flashSales = $this->flashSaleService->listAllFlashSales($request->all());
+        $flashSales = \App\Models\FlashSale::with(["product" => fn ($q) => $q->basic()->select("id", "name_en", "saleable_id", "saleable_type")])->orderByDesc("date")->orderByDesc("time")->get();
     
         return view('dashboard.FlashSales.index', [
-            'flashSales' => $flashSales['data'], 
+            'flashSales' => $flashSales, 
         ]);
     }
     

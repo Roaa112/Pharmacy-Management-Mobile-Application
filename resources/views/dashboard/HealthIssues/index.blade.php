@@ -1,75 +1,58 @@
-@extends('adminlte::page')
+@extends('admin.layout')
 
-@section('title', 'Dashboard')
+@section('title', 'Health issues')
+@section('pretitle', 'Catalog')
+@section('subtitle', 'Conditions customers can browse by in the app (e.g. diabetes).')
 
-@section('content_header')
-    <h1>Dashboard</h1>
-@stop
+@section('actions')
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createhealthIssue"><i class="ti ti-plus me-1"></i>New health issue</button>
+@endsection
 
 @section('content')
 <div class="card">
-    <div class="card-header d-flex justify-content-between">
-        <h3>HealthIssues</h3>
-        <button class="btn btn-primary" data-toggle="modal" data-target="#createHealthIssueModal">Add HealthIssue</button>
-    </div>
-    <div class="card-body">
-        <table class="table table-bordered">
-            <thead>
-                <tr>
-                        <th>Image</th>
-                    <th>Name Ar</th>
-                    <th>Name En</th>
-
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($healthIssues as $healthIssue)
+    @if ($healthIssues->isEmpty())
+        <x-admin.empty icon="stethoscope" title="No health issues yet" />
+    @else
+        <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+                <thead><tr><th>Health issue</th><th>Arabic name</th><th class="w-1"></th></tr></thead>
+                <tbody>
+                @foreach ($healthIssues as $healthIssue)
                     <tr>
-                        <td><img src="{{ asset( $healthIssue->image) }}" width="80"></td>
-                        <td><strong>{{ $healthIssue->name_ar }}</strong></td>
-                        <td><strong>{{ $healthIssue->name_en }}</strong></td>
                         <td>
-                            <button class="btn btn-sm btn-info edit-HealthIssue-btn"
-    data-toggle="modal"
-    data-target="#editHealthIssueModal{{ $healthIssue->id }}"
-                                data-id="{{$healthIssue->id }}"
-
-                                data-name_ar="{{ $healthIssue->name_ar }}"
-                                data-image="{{ $healthIssue->image }}"
-                                data-name_en="{{ $healthIssue->name_en }}">
-                                Edit
-                            </button>
-
-                            <form action="{{ route('dashboard.health_issues.destroy', $healthIssue->id) }}" method="POST" style="display:inline-block;" onsubmit="return confirm('{{ __('Are you sure?') }}')">
-                                @csrf @method('DELETE')
-                                <button class="btn btn-sm btn-danger">Delete</button>
-                            </form>
+                            <div class="d-flex align-items-center gap-3">
+                                <x-admin.thumb :src="$healthIssue->image ? asset($healthIssue->image) : null" :alt="$healthIssue->name_en" />
+                                <span class="fw-medium">{{ $healthIssue->name_en }}</span>
+                            </div>
+                        </td>
+                        <td dir="rtl" class="text-end text-md-start">{{ $healthIssue->name_ar }}</td>
+                        <td>
+                            <div class="btn-list flex-nowrap">
+                                <button class="btn btn-sm btn-ghost-primary btn-icon" data-bs-toggle="modal" data-bs-target="#edithealthIssue{{ $healthIssue->id }}" title="Edit" aria-label="Edit"><i class="ti ti-edit"></i></button>
+                                <x-admin.delete :action="route('dashboard.health_issues.destroy', $healthIssue->id)" />
+                            </div>
                         </td>
                     </tr>
-
-                    <!-- Edit Modal for Parent -->
-                    @include('dashboard.HealthIssues.modals.edit', ['healthIssue' => $healthIssue])
-                @empty
-                    <tr>
-                        <td colspan="3">No HealthIssues found.</td>
-                    </tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
+                @endforeach
+                </tbody>
+            </table>
+        </div>
+    @endif
 </div>
+@endsection
 
-@include('dashboard.HealthIssues.modals.create')
-@stop
+@push('modals')
+    <x-admin.modal id="createhealthIssue" title="New health issue" :action="route('dashboard.health_issues.store')" files submit="Create">
+        <x-admin.input name="name_en" label="Name (English)" required />
+        <x-admin.input name="name_ar" label="Name (Arabic)" required dir="rtl" />
+        <x-admin.input type="file" name="image" label="Image" accept="image/*" />
+    </x-admin.modal>
 
-@section('css')
-{{-- Add here extra stylesheets --}}
-{{-- <link rel="stylesheet" href="/css/admin_custom.css"> --}}
-@stop
-
-@section('js')
-<script>
-    console.log("Hi, I'm using the Laravel-AdminLTE package!");
-</script>
-@stop
+    @foreach ($healthIssues as $healthIssue)
+        <x-admin.modal :id="'edithealthIssue'.$healthIssue->id" title="Edit health issue" :action="route('dashboard.health_issues.update', $healthIssue->id)" method="PUT" files>
+            <x-admin.input name="name_en" label="Name (English)" :value="$healthIssue->name_en" required />
+            <x-admin.input name="name_ar" label="Name (Arabic)" :value="$healthIssue->name_ar" required dir="rtl" />
+            <x-admin.input type="file" name="image" label="Replace image" accept="image/*" hint="Leave empty to keep the current image." />
+        </x-admin.modal>
+    @endforeach
+@endpush

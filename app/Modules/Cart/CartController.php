@@ -9,6 +9,8 @@ use App\Models\Product;
 use App\Models\ProductSize;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use App\Support\Money;
+use App\Support\StoreClock;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
 use App\Modules\Cart\Services\CartService;
@@ -77,7 +79,8 @@ public function showCart(Request $request)
     $cartItems = $this->cartService->getCart($user->id);
 
     $data = [];
-    $totalPrice = 0;
+    $totalMinor = 0;
+    $adjustments = [];
 
     foreach ($cartItems as $item) {
         $product = $item->product;
@@ -85,12 +88,27 @@ public function showCart(Request $request)
 
         // لو المنتج أو الحجم غير موجود → نحذفه من السلة
         if (!$product || !$size || $size->stock <= 0) {
+            $adjustments[] = [
+                'product_id' => $item->product_id,
+                'name' => $product?->name,
+                'size' => $size?->size,
+                'reason' => 'out_of_stock',
+                'removed_quantity' => $item->product_quantity,
+            ];
             $item->delete();
             continue;
         }
 
         // لو الكمية في السلة > المخزون → نحدثها
         if ($item->product_quantity > $size->stock) {
+            $adjustments[] = [
+                'product_id' => $item->product_id,
+                'name' => $product->name,
+                'size' => $size->size,
+                'reason' => 'quantity_reduced',
+                'requested_quantity' => $item->product_quantity,
+                'available_quantity' => $size->stock,
+            ];
             $item->product_quantity = $size->stock;
         }
 
@@ -98,13 +116,15 @@ public function showCart(Request $request)
 
         $currentPrice = $product->priceForSize($size);
 
+        $lineTotalMinor = Money::toMinor($currentPrice) * $item->product_quantity;
+
         $item->price_at_time = $currentPrice;
         $item->original_price = $originalPrice;
-        $item->total_price = $currentPrice * $item->product_quantity;
+        $item->total_price = Money::fromMinor($lineTotalMinor);
         $item->save();
 
-        $lineTotal = $item->total_price;
-        $totalPrice += $lineTotal;
+        $lineTotal = Money::fromMinor($lineTotalMinor);
+        $totalMinor += $lineTotalMinor;
 
         $discountPercentage = null;
         if ($originalPrice > 0) {
@@ -126,11 +146,18 @@ public function showCart(Request $request)
         ];
     }
 
-    return response()->json([
+    $response = [
         'success' => true,
         'data' => $data,
-        'total_price' => round($totalPrice, 2),
-    ]);
+        'total_price' => Money::fromMinor($totalMinor),
+    ];
+
+    // Tell the app why lines disappeared or shrank (new key; existing keys unchanged).
+    if ($adjustments) {
+        $response['adjustments'] = $adjustments;
+    }
+
+    return response()->json($response);
 }
 
 
@@ -200,21 +227,24 @@ public function showCart(Request $request)
 public function addToCart(Request $request)
 {
     $request->validate([
-        'product_id'   => 'required|integer|exists:products,id',
+        'product_id'   => ['required', 'integer', Rule::exists('products', 'id')->withoutTrashed()],
         // The size must belong to the product, otherwise another product's (cheaper) size price would be used.
         'product_size' => ['required', 'integer', Rule::exists('product_sizes', 'id')->where('product_id', $request->input('product_id'))],
         'quantity'     => 'required|integer|min:1|max:1000',
     ]);
 
-    $product = Product::with('sizes')->findOrFail($request->product_id);
     $productSize = ProductSize::findOrFail($request->product_size);
 
+    // Checked before loading the product: a fully sold-out product is hidden from the API,
+    // and the customer should get this message rather than a generic 404.
     if ($productSize->stock <= 0) {
         return response()->json([
             'success' => false,
             'message' => 'هذا المقاس غير متوفر حالياً في المخزون',
         ], 400);
     }
+
+    $product = Product::findOrFail($request->product_id);
 
     $user = $request->user();
     if (!$user) {
@@ -226,7 +256,7 @@ public function addToCart(Request $request)
 
     $originalPrice = $productSize->price;
     $finalPrice = $product->priceForSize($productSize);
-    $totalPrice = $finalPrice * $quantity;
+    $totalPrice = Money::fromMinor(Money::toMinor($finalPrice) * $quantity);
 
     $data = $this->cartService->addToCart([
         'user_id'          => $user->id,
@@ -268,7 +298,7 @@ public function addToCart(Request $request)
     $sizeOfProduct = Rule::exists('product_sizes', 'id')->where('product_id', $request->input('product_id'));
 
     $request->validate([
-        'product_id' => 'required|integer|exists:products,id',
+        'product_id' => ['required', 'integer', Rule::exists('products', 'id')->withoutTrashed()],
         'operation' => 'nullable|in:increment,decrement',
         'old_size_id' => ['nullable', 'integer', $sizeOfProduct],
         'new_size_id' => ['nullable', 'integer', $sizeOfProduct],
@@ -292,6 +322,14 @@ public function addToCart(Request $request)
     }
 
     $product = $cartItem->product;
+
+    // The product is hidden once every size is sold out (or it was deleted).
+    if (!$product) {
+        return response()->json([
+            'success' => false,
+            'message' => 'المنتج غير متوفر حالياً في المخزون',
+        ], 400);
+    }
 
     // 1. تعديل الكمية
     if ($request->filled('operation')) {
@@ -341,7 +379,7 @@ public function addToCart(Request $request)
             $existingItem->product_quantity = $newTotalQty;
             $existingItem->price_at_time = $finalPrice;
             $existingItem->original_price = $newSize->price;
-            $existingItem->total_price = $finalPrice * $existingItem->product_quantity;
+            $existingItem->total_price = Money::fromMinor(Money::toMinor($finalPrice) * $existingItem->product_quantity);
             $existingItem->save();
 
             $cartItem->delete();
@@ -363,11 +401,19 @@ public function addToCart(Request $request)
             $cartItem->product_quantity = $newSize->stock;
         }
 
-        $cartItem->total_price = $finalPrice * $cartItem->product_quantity;
+        $cartItem->total_price = Money::fromMinor(Money::toMinor($finalPrice) * $cartItem->product_quantity);
     } else {
         // تحديث السعر فقط لو الكمية بس اتغيرت
         $size = $cartItem->size;
         $stock = $size->stock ?? 0;
+
+        // A sold-out line cannot be edited (it used to be saved with quantity 0).
+        if ($stock <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'المنتج غير متوفر حالياً في المخزون',
+            ], 400);
+        }
 
         if ($cartItem->product_quantity > $stock) {
             $cartItem->product_quantity = $stock;
@@ -377,7 +423,7 @@ public function addToCart(Request $request)
 
         $cartItem->price_at_time = $finalPrice;
         $cartItem->original_price = $size->price;
-        $cartItem->total_price = $finalPrice * $cartItem->product_quantity;
+        $cartItem->total_price = Money::fromMinor(Money::toMinor($finalPrice) * $cartItem->product_quantity);
     }
 
     $cartItem->save();
@@ -418,8 +464,8 @@ public function addToCart(Request $request)
             ], 401);
         }
 
-        // Check coupon validity dates
-        $now = now();
+        // Check coupon validity dates (same store clock as checkout).
+        $now = StoreClock::now();
         if ($coupon->start_at && $now->lt($coupon->start_at)) {
             return response()->json([
                 'success' => false,
@@ -452,13 +498,16 @@ public function addToCart(Request $request)
 
         // Get cart items and calculate total
         $cartItems = $this->cartService->getCart($user->id);
-        $total = $cartItems->sum('total_price');
+        // Preview on the products subtotal; checkout applies the same percentage to subtotal + delivery.
+        // Prices come from the catalogue now, as at checkout, not from the stored cart rows.
+        $totalMinor = $cartItems->sum(fn ($item) => $item->product && $item->size
+            ? Money::toMinor($item->product->priceForSize($item->size)) * $item->product_quantity
+            : 0);
+        $discountMinor = min(Money::percentOf($totalMinor, $coupon->discount_value), $totalMinor);
 
-       
-        $discount = ($total * $coupon->discount_value) / 100;
-
-    // تأكد أن الإجمالي لا يصبح سالب
-    $discountedTotal = max(0, $total - $discount); // Ensure total doesn't go negative
+        $total = Money::fromMinor($totalMinor);
+        $discount = Money::fromMinor($discountMinor);
+        $discountedTotal = Money::fromMinor($totalMinor - $discountMinor);
 
         // This endpoint only previews the discount. Usage is recorded once, at checkout;
         // recording it here consumed the coupon without an order and made

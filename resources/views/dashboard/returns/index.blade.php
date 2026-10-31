@@ -1,109 +1,59 @@
-@extends('adminlte::page')
+@extends('admin.layout')
 
-@section('title', 'طلبات المرتجع')
+@php $tabs = ['' => 'All', 'pending' => 'Pending', 'accepted' => 'Accepted', 'rejected' => 'Rejected', 'canceled' => 'Canceled by customer']; @endphp
 
-@section('content_header')
-    <h1 class="mb-3">طلبات المرتجع</h1>
-@stop
+@section('title', 'Returns')
+@section('pretitle', 'Sales')
+@section('subtitle', 'Customer return and refund requests. Accepting records the decision only: no money is moved and stock is not restored.')
 
 @section('content')
-
-@if(session('success'))
-    <div class="alert alert-success">{{ session('success') }}</div>
-@endif
-
-@if(session('error'))
-    <div class="alert alert-danger">{{ session('error') }}</div>
-@endif
-
 <div class="card">
-    <div class="card-body table-responsive">
-        <table class="table table-bordered table-striped">
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>رقم الطلب</th>
-                    <th>السبب</th>
-                    <th>المبلغ المرتجع</th>
-                    <th>طريقة الاسترجاع</th>
-                    <th>الحالة</th>
-                    <th>تاريخ الطلب</th>
-                    <th>الصور</th>
-                    <th>إجراءات</th>
-                       <th>عرض</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach($refunds as $refund)
+    <div class="card-header">
+        <ul class="nav nav-tabs card-header-tabs">
+            @foreach ($tabs as $value => $label)
+                <li class="nav-item">
+                    <a href="{{ route('dashboard.returns.index', array_filter(['status' => $value])) }}" class="nav-link {{ (string) request('status') === $value ? 'active' : '' }}">{{ $label }}</a>
+                </li>
+            @endforeach
+        </ul>
+    </div>
+
+    @if ($refunds->isEmpty())
+        <x-admin.empty icon="receipt-off" title="No return requests" />
+    @else
+        <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+                <thead><tr><th>Request</th><th>Order</th><th>Customer</th><th>Reason</th><th class="text-end">Requested refund</th><th>Status</th><th class="w-1"></th></tr></thead>
+                <tbody>
+                @foreach ($refunds as $refund)
                     <tr>
-                        <td>{{ $loop->iteration }}</td>
-                        <td>{{ $refund->order_id }}</td>
-                        <td>{{ $refund->reason }}</td>
-                        <td>{{ $refund->refund_amount ?? '-' }}</td>
-                        <td>{{ $refund->refund_method ?? '-' }}</td>
+                        <td><a href="{{ route('dashboard.returns.show', $refund->id) }}" class="fw-medium">#{{ $refund->id }}</a>
+                            <div class="small text-secondary">{{ $refund->created_at->format('M j, Y') }}</div></td>
                         <td>
-                            @if($refund->status == 'pending')
-                                <span class="badge bg-warning">قيد المراجعة</span>
-                            @elseif($refund->status == 'accepted')
-                                <span class="badge bg-success">تم القبول</span>
-                            @elseif($refund->status == 'rejected')
-                                <span class="badge bg-danger">تم الرفض</span>
-                            @endif
-                        </td>
-                        <td>{{ $refund->created_at->format('Y-m-d') }}</td>
-                        <td>
-                            @foreach($refund->images as $image)
-                                <a href="{{ asset('storage/' . $image->path) }}" target="_blank">
-                                    <img src="{{ asset('storage/' . $image->path) }}" width="50" class="img-thumbnail me-1">
-                                </a>
-                            @endforeach
-                        </td>
-                        <td>
-                            @if($refund->status == 'pending')
-                               <form action="{{ route('dashboard.returns.accept', $refund->id) }}" method="POST" style="display:inline-block;">
-    @csrf
-    <button type="submit" class="btn btn-sm btn-success">قبول</button>
-</form>
-
-<form action="{{ route('dashboard.returns.reject', $refund->id) }}" method="POST" style="display:inline-block;">
-    @csrf
-    <button type="submit" class="btn btn-sm btn-danger">رفض</button>
-</form>
-
+                            @if ($refund->order)
+                                <a href="{{ route('dashboard.orders.show', $refund->order) }}">#{{ $refund->order_id }}</a>
+                                <div class="small text-secondary"><x-admin.money :amount="$refund->order->total_price" /></div>
                             @else
-                                <span class="text-muted">تمت المعالجة</span>
+                                #{{ $refund->order_id }}
                             @endif
                         </td>
-                        <td>
-                             <a href="{{ route('dashboard.returns.show', $refund->id) }}" class="btn btn-sm btn-primary">عرض</a>
+                        <td>{{ $refund->user->name ?? '—' }}</td>
+                        <td class="text-truncate" style="max-width: 14rem" title="{{ $refund->reason }}">{{ $refund->reason }}</td>
+                        <td class="text-end">
+                            @if ($refund->refund_amount !== null)
+                                <x-admin.money :amount="$refund->refund_amount" />
+                            @else
+                                <span class="text-secondary">—</span>
+                            @endif
                         </td>
+                        <td><x-admin.status :status="$refund->status" /></td>
+                        <td><a href="{{ route('dashboard.returns.show', $refund->id) }}" class="btn btn-sm {{ $refund->status === 'pending' ? 'btn-primary' : 'btn-outline-secondary' }}">{{ $refund->status === 'pending' ? 'Review' : 'View' }}</a></td>
                     </tr>
                 @endforeach
-            </tbody>
-        </table>
-
-        {{-- pagination --}}
-        <div class="mt-3">
-            {{ $refunds->links() }}
+                </tbody>
+            </table>
         </div>
-    </div>
+        <x-admin.pagination :paginator="$refunds->withQueryString()" />
+    @endif
 </div>
-
-@stop
-
-@section('css')
-<style>
-    .table td, .table th {
-        vertical-align: middle !important;
-    }
-    .img-thumbnail {
-        border-radius: 0.5rem;
-    }
-</style>
-@stop
-
-@section('js')
-<script>
-    console.log("قائمة طلبات المرتجع مفعّلة");
-</script>
-@stop
+@endsection

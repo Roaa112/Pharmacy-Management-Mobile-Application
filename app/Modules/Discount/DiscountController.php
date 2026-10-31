@@ -2,8 +2,12 @@
 
 namespace App\Modules\Discount;
 
+use App\Models\Brand;
+use App\Models\Category;
 use App\Models\Discount;
+use App\Models\Product;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use App\Http\Controllers\Controller;
 use App\Modules\Brand\Services\BrandService;
 use App\Modules\Product\Services\ProductService;
@@ -24,15 +28,13 @@ class DiscountController extends Controller
    public function index(Request $request)
 {
     $discounts = $this->discountService->getAll();
-    $brands = $this->brandService->listAllBrands($request->all());
-    $products = $this->productService->listAllProducts($request->all());
-    $categories = $this->categoryService->listAllCategories($request->all());
 
+    // Full lists (the listing services stop at 10 rows).
     return view('dashboard.Discounts.index', [
         'discounts'  => $discounts,
-        'brands'     => $brands['data'],
-        'products'   => $products['data'],
-        'categories' => $categories['data'],
+        'brands'     => Brand::orderBy('name_en')->pluck('name_en', 'id'),
+        'products'   => Product::basic()->orderBy('name_en')->pluck('name_en', 'id'),
+        'categories' => Category::orderBy('name_en')->pluck('name_en', 'id'),
     ]);
 }
 
@@ -69,7 +71,23 @@ class DiscountController extends Controller
 
 public function store(Request $request)
 {
-
+    $request->validate([
+        'discount_type' => 'required|in:fixed,percent,buy_x_get_y,amount_gift',
+        'discount_value' => ['nullable', 'required_if:discount_type,fixed,percent', 'numeric', 'min:0',
+            Rule::when($request->input('discount_type') === 'percent', 'max:100')],
+        'min_quantity' => 'nullable|required_if:discount_type,buy_x_get_y|integer|min:1',
+        'free_quantity' => 'nullable|integer|min:0',
+        'min_amount' => 'nullable|required_if:discount_type,amount_gift|numeric|min:0',
+        'targets' => 'required|array|min:1',
+        'targets.*.type' => 'required|in:product,brand,category',
+        'targets.*.id' => 'required|integer|min:1',
+        'gift_targets' => 'nullable|required_if:discount_type,buy_x_get_y,amount_gift|array',
+        'gift_targets.*.type' => 'required|in:product,brand,category',
+        'gift_targets.*.id' => 'required|integer|min:1',
+        // A rule without dates never becomes active (checkout and pricing filter on them).
+        'starts_at' => 'required|date',
+        'ends_at' => 'required|date|after:starts_at',
+    ]);
 
 if (!in_array($request->discount_type, ['buy_x_get_y', 'amount_gift'])) {
     $request->request->remove('gift_targets');
@@ -92,8 +110,8 @@ if (!in_array($request->discount_type, ['buy_x_get_y', 'amount_gift'])) {
 
     public function edit($id)
     {
-        $discount = $this->discountService->getById($id);
-        return view('dashboard.Discounts.edit', compact('discount'));
+        // Dates are edited from the list; there is no separate edit page.
+        return redirect()->route('dashboard.discounts.index');
     }
 
     public function update(Request $request, $id)

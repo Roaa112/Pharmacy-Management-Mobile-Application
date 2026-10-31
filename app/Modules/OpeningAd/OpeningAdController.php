@@ -17,10 +17,10 @@ class OpeningAdController extends Controller
 
     public function index(Request $request)
     {
-        $OpeningAds = $this->OpeningAdService->listAllOpeningAds($request->all());
+        $OpeningAds = \App\Models\OpeningAd::latest()->get();
 
         return view('dashboard.OpeningAds.index', [
-            'OpeningAds' => $OpeningAds['data'],
+            'OpeningAds' => $OpeningAds,
         ]);
     }
 

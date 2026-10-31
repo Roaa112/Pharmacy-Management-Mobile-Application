@@ -5,6 +5,7 @@ namespace App\Models;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
@@ -61,6 +62,16 @@ public function productReviews(): HasMany
 public function favorites()
 {
     return $this->hasMany(Favorite::class);
+}
+
+public function orders(): HasMany
+{
+    return $this->hasMany(Order::class);
+}
+
+public function returnRequests(): HasMany
+{
+    return $this->hasMany(ReturnRequest::class);
 }
 
     public function coupons()

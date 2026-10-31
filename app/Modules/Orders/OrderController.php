@@ -4,6 +4,9 @@ namespace App\Modules\Orders;
 use Carbon\Carbon;
 
 use App\Models\ProductSize;
+use App\Models\StockMovement;
+use App\Support\Money;
+use App\Support\StoreClock;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\DB;
@@ -282,19 +285,23 @@ public function checkout(Request $request)
         }
 
         // Prices are recalculated from the catalogue now; stored cart prices may be stale.
+        // Totals are computed in integer minor units (see App\Support\Money).
+        $lineTotals = [];
         foreach ($cartItems as $item) {
             $size = $sizes->get($item->product_size_id);
             $item->original_price = $size->price;
             $item->price_at_time = $item->product->priceForSize($size);
-            $item->total_price = round($item->price_at_time * $item->product_quantity, 2);
+            $lineTotals[$item->id] = Money::toMinor($item->price_at_time) * $item->product_quantity;
+            $item->total_price = Money::fromMinor($lineTotals[$item->id]);
         }
 
-        $subtotal = round($cartItems->sum('total_price'), 2);
-        $total = round($subtotal + $deliveryPriceAmount, 2);
+        $subtotalMinor = array_sum($lineTotals);
+        $totalMinor = $subtotalMinor + Money::toMinor($deliveryPriceAmount);
 
         $giftDescription = null;
         $giftRuleId = null;
-        $now = Carbon::now()->addHours(3);
+        // Promotion and coupon dates are local wall-clock times (see StoreClock).
+        $now = StoreClock::now();
 
         // ✅ لهدايا بناءً على القواعد
         $giftRules = DiscountRule::with('targets')
@@ -348,10 +355,10 @@ public function checkout(Request $request)
                         };
                     });
 
-                    $totalValue += $matchedItems->sum('total_price');
+                    $totalValue += $matchedItems->sum(fn ($item) => $lineTotals[$item->id]);
                 }
 
-                if ($totalValue >= $rule->min_amount) {
+                if ($totalValue >= Money::toMinor($rule->min_amount)) {
                     $giftDescription = "هدية عند الشراء بقيمة {$rule->min_amount} من العروض المحددة → هدية: " .
                         ucfirst($giftTarget->target_type) . " ID: {$giftTarget->target_id}";
                     $giftRuleId = $rule->id;
@@ -361,12 +368,13 @@ public function checkout(Request $request)
         }
 
         // ✅ حساب نقاط اللاء
+        // Points are earned on the products subtotal (before delivery and coupon), as before.
         $settings = Setting::first();
-        $spendX = (float) ($settings?->spend_x ?? 0);
+        $spendXMinor = Money::toMinor($settings?->spend_x);
         $getY = (int) ($settings?->get_y ?? 0);
-        $pointsEarned = $spendX > 0 ? floor($subtotal / $spendX) * $getY : 0;
+        // (float) keeps the JSON number type the app already receives (floor() used to return a float).
+        $pointsEarned = $spendXMinor > 0 ? (float) (intdiv($subtotalMinor, $spendXMinor) * $getY) : 0;
 
-        $discountAmount = 0;
         $coupon = null;
 
         if ($request->filled('coupon_code')) {
@@ -376,17 +384,17 @@ public function checkout(Request $request)
                 ->first();
 
             if ($coupon && $this->couponIsUsableBy($coupon, $user, $now)) {
-                $discountAmount = ($total * $coupon->discount_value) / 100;
-
-                // نضمن ألا يتجاوز الخصم المجموع الكلي
-                $discountAmount = round(min($discountAmount, $total), 2);
+                // The coupon percentage applies to subtotal + delivery; it can never exceed the total.
+                $discountMinor = min(Money::percentOf($totalMinor, $coupon->discount_value), $totalMinor);
 
                 // نخصم المبلغ
-                $total = round($total - $discountAmount, 2);
+                $totalMinor -= $discountMinor;
             } else {
                 $coupon = null;
             }
         }
+
+        $total = Money::fromMinor($totalMinor);
 
         // ✅ إناء الطلب
         $order = Order::create([
@@ -404,7 +412,7 @@ public function checkout(Request $request)
         ]);
 
         foreach ($cartItems as $item) {
-            OrderItem::create([
+            $orderItem = OrderItem::create([
                 'order_id' => $order->id,
                 'product_id' => $item->product_id,
                 'product_size_id' => $item->product_size_id,
@@ -412,9 +420,16 @@ public function checkout(Request $request)
                 'price_at_time' => $item->price_at_time,
                 'original_price' => $item->original_price,
                 'total_price' => $item->total_price,
+                // Snapshot so the order keeps what was bought even if the product is renamed or deleted.
+                'product_name_ar' => $item->product->name_ar,
+                'product_name_en' => $item->product->name_en,
+                'size_label' => $sizes->get($item->product_size_id)->size,
             ]);
 
-            $sizes->get($item->product_size_id)->decrement('stock', $item->product_quantity);
+            ProductSize::moveStock($item->product_size_id, -$item->product_quantity, StockMovement::TYPE_SALE, [
+                'reference' => $orderItem,
+                'user_id' => $user->id,
+            ]);
         }
 
         Cart::where('user_id', $user->id)->delete();
@@ -467,7 +482,11 @@ public function updateStatus(Request $request, Order $order)
         // Canceling returns the reserved quantities to stock (exactly once: canceled is final).
         if ($request->status === 'canceled') {
             foreach ($order->items as $item) {
-                ProductSize::whereKey($item->product_size_id)->increment('stock', $item->quantity);
+                ProductSize::moveStock($item->product_size_id, $item->quantity, StockMovement::TYPE_CANCELLATION, [
+                    'reference' => $item,
+                    'admin_id' => auth('admin')->id(),
+                    'reason' => "Order #{$order->id} canceled",
+                ]);
             }
         }
 
@@ -485,11 +504,25 @@ public function updateStatus(Request $request, Order $order)
 }
 
 
-public function index()
+public function index(Request $request)
 {
-    $orders = Order::with(['user', 'address', 'items.product', 'items.size', 'giftRule'])
+    $status = $request->query('status');
+    $search = trim((string) $request->query('search'));
+
+    $orders = Order::with(['user:id,name,phone', 'returnRequests:id,order_id,status'])
+        ->withCount('items')
+        ->when(in_array($status, array_keys($this->statusLabels()), true), fn ($q) => $q->where('status', $status))
+        ->when($search !== '', function ($q) use ($search) {
+            $q->where(function ($q) use ($search) {
+                if (ctype_digit(ltrim($search, '#'))) {
+                    $q->where('id', (int) ltrim($search, '#'));
+                }
+                $q->orWhereHas('user', fn ($u) => $u->where('name', 'like', "%{$search}%")->orWhere('phone', 'like', "%{$search}%"));
+            });
+        })
         ->latest()
-        ->paginate(15);
+        ->paginate(15)
+        ->withQueryString();
 
    $totalEarned = Order::where('status', 'completed')
     ->whereDoesntHave('returnRequests', function ($query) {
@@ -497,8 +530,50 @@ public function index()
     })
     ->sum('total_price');
 
+    $statusCounts = Order::select('status', DB::raw('COUNT(*) as total'))->groupBy('status')->pluck('total', 'status');
 
-    return view('dashboard.orders.index', compact('orders', 'totalEarned'));
+    return view('dashboard.orders.index', [
+        'orders' => $orders,
+        'totalEarned' => $totalEarned,
+        'statusCounts' => $statusCounts,
+        'statusLabels' => $this->statusLabels(),
+        'status' => $status,
+        'search' => $search,
+    ]);
+}
+
+public function show(Order $order)
+{
+    $order->load([
+        'user:id,name,email,phone',
+        'address',
+        'items.product' => fn ($q) => $q->basic(),
+        'items.size',
+        'giftRule',
+        'coupon:id,code,discount_value',
+        'returnRequests',
+    ]);
+
+    // Only the transitions the server will accept are offered (see Order::canTransitionTo()).
+    $nextStatuses = collect($this->statusLabels())
+        ->filter(fn ($label, $value) => $value !== $order->status && $order->canTransitionTo($value));
+
+    return view('dashboard.orders.show', [
+        'order' => $order,
+        'statusLabels' => $this->statusLabels(),
+        'nextStatuses' => $nextStatuses,
+    ]);
+}
+
+private function statusLabels(): array
+{
+    return [
+        'pending' => 'Pending',
+        'confirmed' => 'Confirmed',
+        'on_delivery' => 'On delivery',
+        'completed' => 'Completed',
+        'canceled' => 'Canceled',
+    ];
 }
 
 
@@ -563,7 +638,9 @@ public function index()
         'original_price' => $item->original_price,
         'price_at_time' => $item->price_at_time,
         'total_price' => $item->total_price,
-        'size' => $item->size->size ?? 'غير متوفر',
+        // The size label saved at checkout; older orders fall back to the current size.
+        'size' => $item->size_label ?? $item->size->size ?? 'غير متوفر',
+        'product_name' => (app()->getLocale() === 'ar' ? $item->product_name_ar : $item->product_name_en) ?? $item->product?->name,
     ];
 });
 

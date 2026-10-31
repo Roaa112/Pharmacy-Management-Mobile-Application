@@ -18,11 +18,11 @@ class ContactMassageController extends Controller
     public function index(Request $request)
 {
    
-    $contactMessages = $this->contactMessageService->listAllContactMessages($request->all());
+    $contactMessages = \App\Models\ContactMessage::latest()->paginate(25);
 
     
     return view('dashboard.ContactMessages.index', [
-        'ContactMessages' => $contactMessages['data'], 
+        'ContactMessages' => $contactMessages, 
     ]);
 }
 public function destroy($id)

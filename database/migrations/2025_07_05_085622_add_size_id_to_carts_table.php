@@ -20,6 +20,12 @@ return new class extends Migration
 
     public function down(): void
     {
-        //
+        // Without this, a full rollback left carts pointing at the dropped product_sizes
+        // table and the next DROP TABLE failed ("no such table: product_sizes").
+        if (Schema::hasColumn('carts', 'product_size_id')) {
+            Schema::table('carts', function (Blueprint $table) {
+                $table->dropConstrainedForeignId('product_size_id');
+            });
+        }
     }
 };

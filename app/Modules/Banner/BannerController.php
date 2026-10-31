@@ -17,10 +17,10 @@ class BannerController extends Controller
 
     public function index(Request $request)
     {
-        $banners = $this->bannerService->listAllBanners($request->all());
+        $banners = \App\Models\Banner::orderBy("order_of_appearance")->get();
     
         return view('dashboard.Banners.index', [
-            'banners' => $banners['data'], 
+            'banners' => $banners, 
         ]);
     }
     

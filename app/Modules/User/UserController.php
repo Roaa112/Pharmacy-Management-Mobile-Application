@@ -19,10 +19,13 @@ use App\Modules\Shared\Enums\HttpStatusCodeEnum;
 use App\Modules\User\Requests\CreateUserRequest;
 use App\Modules\User\Requests\UpdateUserRequest;
 use Laravel\Sanctum\PersonalAccessToken;
+use Illuminate\Support\Facades\RateLimiter;
 
 
 class UserController extends Controller
 {
+    private const MAX_OTP_ATTEMPTS = 5;
+
     public function __construct(private UserService $userService)
     {
     }
@@ -98,8 +101,13 @@ class UserController extends Controller
 
     public function resetPassword(Request $request)
     {
+        // current_password is always verified when sent. It becomes mandatory once the
+        // mobile app sends it (PASSWORD_CHANGE_REQUIRES_CURRENT=true).
+        $mustConfirm = config('auth.password_change_requires_current') && $request->user()->password;
+
         $request->validate([
             'email' => 'nullable|email',
+            'current_password' => [$mustConfirm ? 'required' : 'nullable', 'string', 'current_password:sanctum'],
             'password' => 'required|string|confirmed|min:8',
         ]);
 
@@ -149,15 +157,24 @@ class UserController extends Controller
     {
         $user = User::where('email', $email)->first();
 
-        if (
-            !$user
-            || !$user->otp_code
-            || !$user->otp_expires_at
-            || now()->gt($user->otp_expires_at)
-            || !Hash::check($otp, $user->otp_code)
-        ) {
+        if (!$user || !$user->otp_code || !$user->otp_expires_at || now()->gt($user->otp_expires_at)) {
             return null;
         }
+
+        // Per-account cap, independent of IP: after 5 wrong codes the OTP is destroyed,
+        // so spreading guesses over many IPs cannot brute-force the 6 digits.
+        $attemptsKey = 'otp-attempts:' . $user->id;
+
+        if (!Hash::check($otp, $user->otp_code)) {
+            if (RateLimiter::hit($attemptsKey, 600) >= self::MAX_OTP_ATTEMPTS) {
+                $user->forceFill(['otp_code' => null, 'otp_expires_at' => null])->save();
+                RateLimiter::clear($attemptsKey);
+            }
+
+            return null;
+        }
+
+        RateLimiter::clear($attemptsKey);
 
         return $user;
     }

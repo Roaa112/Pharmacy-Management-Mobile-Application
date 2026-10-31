@@ -19,6 +19,7 @@ class UpdateProductRequest extends FormRequest
             'sizes.*.size' => 'nullable|string|max:50',
             'sizes.*.price' => 'nullable|numeric|min:0',
             'sizes.*.stock' => 'nullable|integer|min:0',
+            'sizes.*.stock_original' => 'nullable|integer|min:0',
 
             'rate' => 'nullable|numeric|between:0,5',
             'image' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',

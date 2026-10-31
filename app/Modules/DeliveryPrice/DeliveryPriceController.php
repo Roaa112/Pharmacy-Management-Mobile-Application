@@ -27,10 +27,10 @@ public function indexapi(Request $request)
 
     public function index(Request $request)
     {
-        $deliveryPrice = $this->deliveryPriceService->listAllDeliveryPrices($request->all());
+        $deliveryPrice = \App\Models\DeliveryPrice::orderBy('governorate')->get();
 
         return view('dashboard.DeliveryPrice.index', [
-            'deliveryPrice' => $deliveryPrice['data'],
+            'deliveryPrice' => $deliveryPrice,
         ]);
     }
 

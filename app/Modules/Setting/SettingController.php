@@ -17,10 +17,9 @@ class SettingController extends Controller
 
     public function index(Request $request)
     {
-        $settings = $this->settingService->listAllSettings($request->all());
-    
+        // The app reads a single settings row (Setting::first()).
         return view('dashboard.Settings.index', [
-            'settings' => $settings['data'], 
+            'setting' => \App\Models\Setting::orderBy('id')->first(),
         ]);
     }
     

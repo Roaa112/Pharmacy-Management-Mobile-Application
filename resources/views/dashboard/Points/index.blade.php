@@ -1,132 +1,90 @@
-@extends('adminlte::page')
+@extends('admin.layout')
 
-@section('title', 'النقاط')
-
-@section('content_header')
-    <h1>النقاط المكتسبة</h1>
-@stop
+@section('title', 'Loyalty points')
+@section('pretitle', 'Sales')
+@section('subtitle', 'Valid, unredeemed points per order. Redeem them when the customer uses their reward.')
 
 @section('content')
-<div class="card">
-    {{-- <div class="card-header d-flex justify-content-between">
-        <h3 class="card-title">قائمة النقاط الصالحة</h3>
-        <span class="badge badge-success">
-            إجمالي النقاط: {{ $valid_points_total ?? 0 }}
-        </span>
-    </div> --}}
-
-    <div class="card-body">
-        {{-- فلتر البحث --}}
-        <form method="GET" action="{{ route('dashboard.points.index') }}" class="mb-3">
-            <div class="row">
-                <div class="col-md-4">
-                    <input type="text" name="user_name" class="form-control"
-                           placeholder="ابحث باسم العميل"
-                           value="{{ request('user_name') }}">
-                </div>
-                <div class="col-md-4">
-                    <input type="text" name="order_id" class="form-control"
-                           placeholder="ابحث برقم الطلب"
-                           value="{{ request('order_id') }}">
-                </div>
-                <div class="col-md-4 d-flex">
-                    <button type="submit" class="btn btn-primary mr-2">
-                        <i class="fas fa-search"></i> بحث
-                    </button>
-                    <a href="{{ route('dashboard.points.index') }}" class="btn btn-secondary">
-                        <i class="fas fa-undo"></i> إعادة تعيين
-                    </a>
-                </div>
-            </div>
-        </form>
-
-        {{-- جدول النقاط --}}
-        @if($orders->isNotEmpty())
-            <form action="{{ route('dashboard.points.redeemMultiple') }}" method="POST" id="redeem-multiple-form">
-                @csrf
-                @method('PATCH')
-
-                <table class="table table-striped table-hover">
-                    <thead class="thead-dark">
-                        <tr>
-                            <th>
-                                <input type="checkbox" id="select-all">
-                            </th>
-                            <th>#</th>
-                            <th>العميل</th>
-                            <th>رقم الطلب</th>
-                            <th>النقاط</th>
-                            <th>تاريخ الإنشاء</th>
-                            <th>تاريخ الانتهاء</th>
-                            <th>الإجراء الفردي</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach($orders as $index => $order)
-                            <tr>
-                                <td>
-                                    <input type="checkbox" name="order_ids[]" value="{{ $order['order_id'] }}" class="order-checkbox">
-                                </td>
-                                <td>{{ $index + 1 }}</td>
-                                <td>{{ $order['user_name'] ?? '-' }}</td>
-                                <td>{{ $order['display_id'] }}</td>
-                                <td><span class="badge badge-info">{{ number_format($order['points_earned']) }}</span></td>
-                                <td>{{ $order['created_at'] }}</td>
-                                <td>{{ $order['expires_at'] }}</td>
-                                <td>
-                                    <form action="{{ route('dashboard.points.redeem', $order['order_id']) }}" method="POST" style="display:inline;" onsubmit="return confirm('هل أنت متأكد من استبدال النقاط لهذا الطلب؟');">
-                                        @csrf
-                                        @method('PATCH')
-                                        <button type="submit" class="btn btn-sm btn-success">
-                                            <i class="fas fa-check"></i>
-                                        </button>
-                                    </form>
-                                </td>
-                            </tr>
-                        @endforeach
-                    </tbody>
-                </table>
-
-                <div class="p-3">
-                    <button type="submit" class="btn btn-success" id="bulk-redeem-btn">
-                        <i class="fas fa-check-double"></i> استبدال المحدد
-                    </button>
-                </div>
-            </form>
-        @else
-            <div class="p-3 text-center text-muted">
-                لا توجد نقاط مكتسبة حالياً.
-            </div>
-        @endif
+<div class="row row-cards mb-3">
+    <div class="col-sm-6 col-lg-4">
+        <x-admin.stat label="Valid points" icon="star" tone="yellow" :value="number_format($valid_points_total ?? 0)" :hint="count($orders).' orders'" />
     </div>
 </div>
-@stop
 
-@section('css')
-    <style>
-        .badge-success { font-size: 1rem; }
-        table td, table th { vertical-align: middle !important; }
-    </style>
-@stop
+<div class="card">
+    <div class="card-header">
+        <form method="GET" action="{{ route('dashboard.points.index') }}" class="row g-2 w-100">
+            <div class="col-md-5"><input type="text" name="user_name" class="form-control" placeholder="Customer name" value="{{ request('user_name') }}"></div>
+            <div class="col-md-3"><input type="text" name="order_id" class="form-control" placeholder="Order number" value="{{ request('order_id') }}" inputmode="numeric"></div>
+            <div class="col-md-4 d-flex gap-2">
+                <button type="submit" class="btn btn-primary"><i class="ti ti-search me-1"></i>Search</button>
+                @if (request()->hasAny(['user_name', 'order_id']))
+                    <a href="{{ route('dashboard.points.index') }}" class="btn btn-outline-secondary">Clear</a>
+                @endif
+            </div>
+        </form>
+    </div>
 
-@section('js')
-<script>
-    // تحديد الكل
-    document.getElementById('select-all').addEventListener('change', function () {
-        document.querySelectorAll('.order-checkbox').forEach(cb => cb.checked = this.checked);
-    });
+    @if ($orders->isEmpty())
+        <x-admin.empty icon="star-off" title="No valid points" text="Points appear here after customers place orders, until they expire or are redeemed." />
+    @else
+        {{-- Bulk form. Row buttons use their own forms below (forms cannot be nested). --}}
+        <form action="{{ route('dashboard.points.redeemMultiple') }}" method="POST" id="redeem-multiple-form"
+              data-confirm="Redeem the points of all selected orders?">
+            @csrf @method('PATCH')
+        </form>
+        <div class="table-responsive">
+            <table class="table table-vcenter card-table">
+                <thead>
+                <tr>
+                    <th class="w-1"><input type="checkbox" class="form-check-input" id="select-all" aria-label="Select all"></th>
+                    <th>Customer</th><th>Order</th><th class="text-end">Points</th><th>Earned</th><th>Expires</th><th class="w-1"></th>
+                </tr>
+                </thead>
+                <tbody>
+                @foreach ($orders as $order)
+                    <tr>
+                        <td><input type="checkbox" name="order_ids[]" value="{{ $order['order_id'] }}" form="redeem-multiple-form" class="form-check-input order-checkbox" aria-label="Select order {{ $order['order_id'] }}"></td>
+                        <td>{{ $order['user_name'] ?? '—' }}</td>
+                        <td><a href="{{ route('dashboard.orders.show', $order['order_id']) }}">#{{ $order['order_id'] }}</a></td>
+                        <td class="text-end"><span class="badge bg-yellow-lt">{{ number_format($order['points_earned']) }}</span>
+                            @if ($order['points_reversed'])<div class="small text-secondary">{{ $order['points_reversed'] }} reversed by refund</div>@endif</td>
+                        <td class="small">{{ \Carbon\Carbon::parse($order['created_at'])->format('M j, Y') }}</td>
+                        <td class="small">{{ \Carbon\Carbon::parse($order['expires_at'])->format('M j, Y') }}</td>
+                        <td>
+                            <form action="{{ route('dashboard.points.redeem', $order['order_id']) }}" method="POST" data-confirm="Redeem the points of order #{{ $order['order_id'] }}?">
+                                @csrf @method('PATCH')
+                                <button type="submit" class="btn btn-sm btn-outline-success text-nowrap"><i class="ti ti-check me-1"></i>Redeem</button>
+                            </form>
+                        </td>
+                    </tr>
+                @endforeach
+                </tbody>
+            </table>
+        </div>
+        <div class="card-footer d-flex align-items-center">
+            <span class="text-secondary small" id="selected-count">0 selected</span>
+            <button type="submit" form="redeem-multiple-form" class="btn btn-success ms-auto" id="bulk-redeem-btn" disabled>
+                <i class="ti ti-checks me-1"></i>Redeem selected
+            </button>
+        </div>
+    @endif
+</div>
+@endsection
 
-    // تأكيد قبل الإرسال لو مفيش حاجة محددة
-    document.getElementById('bulk-redeem-btn').addEventListener('click', function (e) {
-        const checkedBoxes = document.querySelectorAll('.order-checkbox:checked');
-        if (checkedBoxes.length === 0) {
-            e.preventDefault();
-            alert('من فضلك اختر على الأقل طلب واحد لاستبدال نقاطه.');
-        } else {
-            if (!confirm('هل تريد استبدال النقاط لكل الطلبات المحددة؟')) {
-                e.preventDefault();
-            }
-        }
-    });
-</script>
-@stop
+@push('scripts')
+    <script>
+        (function () {
+            const all = document.getElementById('select-all');
+            if (!all) return;
+            const boxes = () => document.querySelectorAll('.order-checkbox');
+            const refresh = () => {
+                const n = document.querySelectorAll('.order-checkbox:checked').length;
+                document.getElementById('selected-count').textContent = n + ' selected';
+                document.getElementById('bulk-redeem-btn').disabled = n === 0;
+            };
+            all.addEventListener('change', () => { boxes().forEach(cb => cb.checked = all.checked); refresh(); });
+            boxes().forEach(cb => cb.addEventListener('change', refresh));
+        })();
+    </script>
+@endpush

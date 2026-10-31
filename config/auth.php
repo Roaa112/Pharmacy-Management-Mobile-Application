@@ -123,4 +123,10 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    | Require the current password on the logged-in "change password" endpoint.
+    | Enable once the mobile app sends `current_password`.
+    */
+    'password_change_requires_current' => (bool) env('PASSWORD_CHANGE_REQUIRES_CURRENT', false),
+
 ];

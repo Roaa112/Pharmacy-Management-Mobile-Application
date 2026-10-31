@@ -18,6 +18,9 @@ use App\Modules\HealthIssue\HealthIssueController;
 use App\Modules\DeliveryPrice\DeliveryPriceController;
 use  App\Modules\HealthService\HealthServiceController;
 use App\Modules\ContactMessage\ContactMassageController;
+use App\Modules\Customers\CustomerController;
+use App\Modules\Inventory\InventoryController;
+use App\Modules\Reports\ReportController;
 
 Route::get('/', function () {
     return redirect('/dashboard');
@@ -32,7 +35,17 @@ Route::get('/product/{id}', function ($id) {
 // Note: ->middleware() must come before ->group(); chaining it after group() has no effect.
 Route::middleware('auth:admin')->group(function () {
 
-Route::get('/dashboard',[HomeController::class,'home']);
+Route::get('/dashboard',[HomeController::class,'home'])->name('dashboard.home');
+
+// Read-only admin pages built on existing data.
+Route::prefix('dashboard')->name('dashboard.')->group(function () {
+    Route::get('customers', [CustomerController::class, 'index'])->name('customers.index');
+    Route::get('customers/{customer}', [CustomerController::class, 'show'])->name('customers.show');
+    Route::get('inventory', [InventoryController::class, 'index'])->name('inventory.index');
+    Route::get('inventory/movements', [InventoryController::class, 'movements'])->name('inventory.movements');
+    Route::get('reports', [ReportController::class, 'index'])->name('reports.index');
+    Route::get('orders/{order}', [OrderController::class, 'show'])->whereNumber('order')->name('orders.show');
+});
 Route::prefix('dashboard/health-results')->group(function () {
     Route::get('/body-weight', [HealthServiceController::class, 'bodyWeight'])->name('admin.health.body_weight');
     Route::get('/blood-sugar', [HealthServiceController::class, 'bloodSugar'])->name('admin.health.blood_sugar');
@@ -62,7 +75,7 @@ Route::prefix('dashboard')->name('dashboard.')->group(function () {
     Route::resource('discounts', DiscountController::class);
     Route::resource('products', ProductController::class);
     Route::resource('settings', SettingController::class);
-    Route::get('/contacts', [ContactMassageController::class, 'index']);
+    Route::get('/contacts', [ContactMassageController::class, 'index'])->name('contacts.index');
     Route::get('orders', [OrderController::class, 'index'])->name('orders.index');
     Route::put('orders/{order}/update-status', [OrderController::class, 'updateStatus'])->name('orders.updateStatus');
 
@@ -88,6 +101,7 @@ Route::patch('/points/{order}/redeem', [PointController::class, 'redeemPoints'])
 
 
 // The dashboard is admin-only; public self-registration of web accounts is not part of it.
-Auth::routes(['register' => false]);
+Auth::routes(['register' => false, 'reset' => false]);
 
-Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');
+// Laravel UI redirects here after login; the admin home is the dashboard.
+Route::redirect('/home', '/dashboard')->name('home');

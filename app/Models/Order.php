@@ -91,6 +91,11 @@ public function getDisplayIdAttribute()
         return $this->hasMany(OrderItem::class);
     }
 
+    public function coupon()
+    {
+        return $this->belongsTo(Coupon::class);
+    }
+
     public function giftRule()
     {
         return $this->belongsTo(DiscountRule::class, 'gift_rule_id');
@@ -99,5 +104,10 @@ public function getDisplayIdAttribute()
     public function returnRequests()
     {
         return $this->hasMany(ReturnRequest::class);
+    }
+
+    public function pointReversals()
+    {
+        return $this->hasMany(LoyaltyPointReversal::class);
     }
 }

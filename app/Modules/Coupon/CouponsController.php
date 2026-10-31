@@ -17,23 +17,14 @@ class CouponsController extends Controller
 
    public function index(Request $request)
 {
-    $coupons = $this->couponService->listAllCoupons($request->all());
-
-    // تحديث حالة الكوبونات حسب الوقت
-    foreach ($coupons['data'] as $coupon) {
-        $now = now();
-
-        // لو تاريخ الانتهاء عدى أو لسه مبدأش
-        if ($coupon->end_at && $coupon->end_at < $now || $coupon->start_at && $coupon->start_at > $now) {
-            if ($coupon->is_active) {
-                $coupon->is_active = false;
-                $coupon->save();
-            }
-        }
-    }
+    // Viewing the list no longer switches coupons off: that disabled scheduled (future) coupons
+    // for good. Checkout already enforces start/end dates; the page shows the state instead.
+    $coupons = Coupon::withCount(['orders' => fn ($q) => $q->where('status', '!=', 'canceled')])
+        ->latest()
+        ->paginate(25);
 
     return view('dashboard.Coupons.index', [
-        'coupons' => $coupons['data'],
+        'coupons' => $coupons,
     ]);
 }
 

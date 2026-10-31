@@ -3,6 +3,9 @@
 namespace App\Modules\Product\Services;
 
 use App\Models\Product;
+use App\Models\ProductSize;
+use App\Models\StockMovement;
+use App\Support\StoreClock;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 
@@ -187,8 +190,9 @@ class ProductService
         }
         if ($request->filled('sizes')) {
             $sizes = collect($request->input('sizes', []))
+                // A size with 0 stock (or price 0) is valid; only skip incomplete form rows.
                 ->filter(function ($size) {
-                    return !empty($size['size']) && !empty($size['price']) && !empty($size['stock']);
+                    return !empty($size['size']) && is_numeric($size['price'] ?? null);
                 })
                 ->values()
                 ->all();
@@ -222,10 +226,16 @@ class ProductService
             $existing = $product->sizes()->where('size', $sizeData['size'])->first();
 
             if (!$existing) {
-                $product->sizes()->create([
+                $size = $product->sizes()->create([
                     'size' => $sizeData['size'],
                     'price' => $sizeData['price'],
-                    'stock' => $sizeData['stock'],
+                    'stock' => 0,
+                ]);
+
+                // Opening stock goes through the ledger like every other stock change.
+                ProductSize::setStock($size->id, (int) ($sizeData['stock'] ?? 0), StockMovement::TYPE_INITIAL, [
+                    'admin_id' => auth('admin')->id(),
+                    'reason' => 'Product created',
                 ]);
             }
         }
@@ -329,28 +339,28 @@ class ProductService
     // 1. Get highest discount values
     $maxPercentValue = DB::table('discount_rules')
         ->where('discount_type', 'percent')
-        ->where('starts_at', '<=', now())
-        ->where('ends_at', '>=', now())
+        ->where('starts_at', '<=', StoreClock::now())
+        ->where('ends_at', '>=', StoreClock::now())
         ->max('discount_value');
 
     $maxFixedValue = DB::table('discount_rules')
         ->where('discount_type', 'fixed')
-        ->where('starts_at', '<=', now())
-        ->where('ends_at', '>=', now())
+        ->where('starts_at', '<=', StoreClock::now())
+        ->where('ends_at', '>=', StoreClock::now())
         ->max('discount_value');
 
     // 2. Get all rules with highest discount values
     $topPercentRules = DB::table('discount_rules')
         ->where('discount_type', 'percent')
-        ->where('starts_at', '<=', now())
-        ->where('ends_at', '>=', now())
+        ->where('starts_at', '<=', StoreClock::now())
+        ->where('ends_at', '>=', StoreClock::now())
         ->where('discount_value', $maxPercentValue)
         ->get();
 
     $topFixedRules = DB::table('discount_rules')
         ->where('discount_type', 'fixed')
-        ->where('starts_at', '<=', now())
-        ->where('ends_at', '>=', now())
+        ->where('starts_at', '<=', StoreClock::now())
+        ->where('ends_at', '>=', StoreClock::now())
         ->where('discount_value', $maxFixedValue)
         ->get();
 
@@ -380,18 +390,12 @@ class ProductService
 
         // inject discount details inside available_sizes
         $sizesWithDiscount = collect($product->available_sizes)->map(function ($size) use ($product, $discountValue) {
-            $priceBefore = (float) $size['original_price'];
-
-            if ($product->discount_type === 'percent') {
-                $priceAfter = $priceBefore - ($priceBefore * ($discountValue / 100));
-            } else {
-                $priceAfter = max(0, $priceBefore - $discountValue);
-            }
-
             return array_merge($size, [
                 'discount_type' => $product->discount_type,
                 'discount_value' => $discountValue,
-                'price_after_discount' => round($priceAfter, 2),
+                // The price the cart and checkout will charge (it used to be recalculated here
+                // from the top rule's value in floats, which could differ from the real price).
+                'price_after_discount' => $size['price'],
             ]);
         });
 
@@ -476,15 +480,15 @@ class ProductService
     //     // 1. Get top percent and fixed discount rules (active only)
     //     $topPercentRule = DB::table('discount_rules')
     //         ->where('discount_type', 'percent')
-    //         ->where('starts_at', '<=', now())
-    //         ->where('ends_at', '>=', now())
+    //         ->where('starts_at', '<=', StoreClock::now())
+    //         ->where('ends_at', '>=', StoreClock::now())
     //         ->orderByDesc('discount_value')
     //         ->first();
 
     //     $topFixedRule = DB::table('discount_rules')
     //         ->where('discount_type', 'fixed')
-    //         ->where('starts_at', '<=', now())
-    //         ->where('ends_at', '>=', now())
+    //         ->where('starts_at', '<=', StoreClock::now())
+    //         ->where('ends_at', '>=', StoreClock::now())
     //         ->orderByDesc('discount_value')
     //         ->first();
 
@@ -573,15 +577,15 @@ class ProductService
     // 1. Get top percent and fixed discount rules (active only)
     $topPercentRule = DB::table('discount_rules')
         ->where('discount_type', 'percent')
-        ->where('starts_at', '<=', now())
-        ->where('ends_at', '>=', now())
+        ->where('starts_at', '<=', StoreClock::now())
+        ->where('ends_at', '>=', StoreClock::now())
         ->orderByDesc('discount_value')
         ->first();
 
     $topFixedRule = DB::table('discount_rules')
         ->where('discount_type', 'fixed')
-        ->where('starts_at', '<=', now())
-        ->where('ends_at', '>=', now())
+        ->where('starts_at', '<=', StoreClock::now())
+        ->where('ends_at', '>=', StoreClock::now())
         ->orderByDesc('discount_value')
         ->first();
 

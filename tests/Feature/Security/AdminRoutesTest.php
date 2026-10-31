@@ -7,6 +7,7 @@ use App\Models\Coupon;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\BuildsShop;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class AdminRoutesTest extends TestCase
@@ -33,9 +34,7 @@ class AdminRoutesTest extends TestCase
         ];
     }
 
-    /**
-     * @dataProvider protectedRoutes
-     */
+    #[DataProvider('protectedRoutes')]
     public function test_guests_cannot_reach_dashboard_routes(string $method, string $uri): void
     {
         $this->{$method}($uri)->assertRedirect('/login');

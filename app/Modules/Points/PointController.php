@@ -44,7 +44,11 @@ class PointController extends Controller
         $query->where('id', $request->order_id);
     }
 
-    $orders = $query->with('user')->get();
+    // Points reversed by refunds (decision D2) are taken off; fully reversed orders drop out.
+    $orders = $query->with('user')->withSum('pointReversals as points_reversed', 'points')->get()
+        ->each(fn ($order) => $order->points_net = (int) $order->points_earned - (int) $order->points_reversed)
+        ->filter(fn ($order) => $order->points_net > 0)
+        ->values();
 
     // تجهيز البيانات للعرض
     $data = $orders->map(function ($order) use ($validityDays) {
@@ -52,21 +56,27 @@ class PointController extends Controller
             'order_id' => $order->id,
             'user_name' => $order->user?->name ?? '-', // يظهر اسم العميل
             'display_id' => $order->display_id,
-            'points_earned' => $order->points_earned,
+            'points_earned' => $order->points_net,
+            'points_reversed' => (int) $order->points_reversed,
             'created_at' => $order->created_at->toDateTimeString(),
             'expires_at' => $order->created_at->copy()->addDays($validityDays)->toDateTimeString(),
         ];
     });
 
      return  view('dashboard.Points.index', [
-           'valid_points_total' => $orders->sum('points_earned'),
+           'valid_points_total' => $orders->sum('points_net'),
             'orders' => $data,
         ]);
 }
 
     public function redeemPoints(Order $order)
     {
-        $order->update(['points_status' => 'redeemed']);
+        // Conditional update: only valid, unredeemed points change, so a repeated click does nothing.
+        $redeemed = $this->redeemableOrders()->whereKey($order->id)->update(['points_status' => 'redeemed']);
+
+        if (!$redeemed) {
+            return redirect()->back()->with('error', 'لا يمكن استبدال نقاط هذا الطلب (مستبدلة أو منتهية أو طلب ملغي).');
+        }
 
         return redirect()->back()->with('success', 'تم استبدال النقاط لهذا الطلب بنجاح.');
     }
@@ -77,10 +87,25 @@ class PointController extends Controller
         'order_ids.*' => 'exists:orders,id',
     ]);
 
-    Order::whereIn('id', $request->order_ids)
+    $redeemed = $this->redeemableOrders()->whereIn('id', $request->order_ids)
         ->update(['points_status' => 'redeemed']);
 
-    return redirect()->back()->with('success', 'تم استبدال النقاط للأوردرات المحددة بنجاح.');
+    return redirect()->back()->with('success', "تم استبدال النقاط لـ {$redeemed} من الأوردرات المحددة.");
 }
+
+    /**
+     * Same eligibility as the points list: earned, not redeemed, not canceled, within validity.
+     */
+    private function redeemableOrders()
+    {
+        $validityDays = Setting::first()?->points_validity_days ?? 0;
+
+        return Order::where('points_earned', '>', 0)
+            ->where('points_status', 'earned')
+            ->where('status', '!=', 'canceled')
+            ->where('created_at', '>=', now()->subDays($validityDays))
+            // Nothing left to redeem once refunds reversed all of the order's points.
+            ->whereRaw('orders.points_earned > (select coalesce(sum(points), 0) from loyalty_point_reversals where loyalty_point_reversals.order_id = orders.id)');
+    }
 
 }

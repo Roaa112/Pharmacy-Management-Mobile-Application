@@ -4,7 +4,10 @@ namespace App\Modules\Product\Repositories;
 
 use App\Models\Product;
 use App\Models\OrderItem;
+use App\Models\ProductSize;
+use App\Models\StockMovement;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use App\Modules\Shared\Repositories\BaseRepository;
 use Illuminate\Database\Eloquent\Model;
 
@@ -126,7 +129,9 @@ class ProductsRepository extends BaseRepository
      */
     public function replaceSizes(Product $product, array $sizes): void
     {
-        DB::transaction(function () use ($product, $sizes) {
+        $context = ['admin_id' => auth('admin')->id()];
+
+        DB::transaction(function () use ($product, $sizes, $context) {
             $keptIds = [];
 
             foreach ($sizes as $sizeData) {
@@ -134,18 +139,15 @@ class ProductsRepository extends BaseRepository
                     continue; // empty form row
                 }
 
-                $attributes = [
-                    'size' => $sizeData['size'],
-                    'price' => $sizeData['price'],
-                    'stock' => $sizeData['stock'] ?? 0,
-                ];
-
                 $size = !empty($sizeData['id']) ? $product->sizes()->find($sizeData['id']) : null;
+                $submittedStock = (int) ($sizeData['stock'] ?? 0);
 
                 if ($size) {
-                    $size->update($attributes);
+                    $size->update(['size' => $sizeData['size'], 'price' => $sizeData['price']]);
+                    $this->applyStockEdit($size, $submittedStock, $sizeData['stock_original'] ?? null, $context);
                 } else {
-                    $size = $product->sizes()->create($attributes);
+                    $size = $product->sizes()->create(['size' => $sizeData['size'], 'price' => $sizeData['price'], 'stock' => 0]);
+                    ProductSize::setStock($size->id, $submittedStock, StockMovement::TYPE_INITIAL, $context + ['reason' => 'Size added']);
                 }
 
                 $keptIds[] = $size->id;
@@ -156,12 +158,44 @@ class ProductsRepository extends BaseRepository
             foreach ($removed as $size) {
                 if (OrderItem::where('product_size_id', $size->id)->exists()) {
                     // Sold before: keep the row for order history, just take it off sale.
-                    $size->update(['stock' => 0]);
+                    ProductSize::setStock($size->id, 0, StockMovement::TYPE_ADJUSTMENT, $context + ['reason' => 'Size removed from product']);
                 } else {
                     $size->delete();
                 }
             }
         });
+    }
+
+    /**
+     * The edit form shows the stock as it was when the page loaded ("stock_original").
+     * - Unchanged field: leave stock alone, so sales made meanwhile are not overwritten.
+     * - Changed field: apply the admin's difference to the current stock (e.g. +50 received).
+     * Without stock_original (older form), the submitted value is taken as the new count.
+     */
+    private function applyStockEdit(ProductSize $size, int $submittedStock, $originalStock, array $context): void
+    {
+        if ($originalStock === null || $originalStock === '') {
+            ProductSize::setStock($size->id, $submittedStock, StockMovement::TYPE_ADJUSTMENT, $context + ['reason' => 'Stock set by admin']);
+            return;
+        }
+
+        $difference = $submittedStock - (int) $originalStock;
+
+        if ($difference === 0) {
+            return;
+        }
+
+        $current = (int) ProductSize::whereKey($size->id)->value('stock');
+
+        if ($current + $difference < 0) {
+            throw ValidationException::withMessages([
+                'sizes' => "Stock for size {$size->size} changed while you were editing (now {$current}). Reload the page and try again.",
+            ]);
+        }
+
+        ProductSize::moveStock($size->id, $difference, StockMovement::TYPE_ADJUSTMENT, $context + [
+            'reason' => "Admin changed stock from {$originalStock} to {$submittedStock}",
+        ]);
     }
 
     public function getLatestProducts(int $limit = 15)

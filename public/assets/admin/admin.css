@@ -1,0 +1,83 @@
+/*
+ * Admin design tokens on top of Tabler (Bootstrap 5).
+ * Only colors, typography and a handful of layout details are customised here;
+ * every component comes from Tabler so pages stay consistent.
+ */
+:root {
+    /* Brand: deep blue primary, teal accent, neutral greys. */
+    --tblr-primary: #1d4ed8;
+    --tblr-primary-rgb: 29, 78, 216;
+    --tblr-teal: #0d9488;
+    --tblr-teal-rgb: 13, 148, 136;
+    --admin-sidebar-bg: #0b1b34;
+    --admin-sidebar-active: rgba(20, 184, 166, .16);
+    --admin-sidebar-accent: #2dd4bf;
+
+    --tblr-body-bg: #f4f6fa;
+    --tblr-border-radius: .5rem;
+    --tblr-card-border-radius: .75rem;
+    --tblr-box-shadow-card: 0 1px 2px rgba(15, 23, 42, .04), 0 1px 3px rgba(15, 23, 42, .06);
+    --tblr-font-sans-serif: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --tblr-body-font-size: .875rem;
+    --tblr-sidebar-width: 15.5rem;
+}
+
+/* ---------- Sidebar ---------- */
+.navbar-vertical.admin-sidebar {
+    --tblr-navbar-bg: var(--admin-sidebar-bg);
+    background: var(--admin-sidebar-bg) !important;
+    border-inline-end: 0;
+}
+.admin-sidebar .navbar-brand { gap: .65rem; }
+.admin-sidebar .brand-mark {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 2rem; height: 2rem; border-radius: .5rem;
+    background: linear-gradient(135deg, var(--tblr-primary), var(--tblr-teal));
+    color: #fff; font-size: 1.15rem; flex-shrink: 0;
+}
+.admin-sidebar .brand-text { line-height: 1.1; }
+.admin-sidebar .brand-text small { display: block; font-weight: 400; font-size: .7rem; opacity: .6; letter-spacing: .04em; text-transform: uppercase; }
+.admin-sidebar .nav-section {
+    padding: 1.1rem 1rem .35rem; font-size: .65rem; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase; color: rgba(255, 255, 255, .42);
+}
+.admin-sidebar .nav-link { border-radius: .45rem; margin: 1px .5rem; }
+.admin-sidebar .nav-link.active,
+.admin-sidebar .dropdown-item.active {
+    background: var(--admin-sidebar-active) !important;
+    color: #fff !important;
+    box-shadow: inset 3px 0 0 var(--admin-sidebar-accent);
+}
+.admin-sidebar .nav-link.active .nav-link-icon { color: var(--admin-sidebar-accent) !important; }
+.admin-sidebar .nav-link .badge { font-size: .65rem; }
+html[data-bs-sidebar^=folded] .admin-sidebar .nav-section,
+html[data-bs-sidebar^=folded] .admin-sidebar .brand-text { display: none; }
+
+/* ---------- Top bar & page header ---------- */
+.admin-topbar { background: #fff; border-bottom: 1px solid var(--tblr-border-color); min-height: 3.5rem; }
+.admin-topbar .form-control { min-width: 16rem; }
+.page-header { margin-bottom: 1.25rem; }
+.page-pretitle { color: var(--tblr-secondary); }
+
+/* ---------- Cards, stats, tables ---------- */
+.card { border-color: #e6e9f0; }
+.stat-card .stat-icon {
+    width: 2.5rem; height: 2.5rem; border-radius: .6rem;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 1.25rem;
+}
+.stat-card .stat-value { font-size: 1.5rem; font-weight: 700; line-height: 1.2; letter-spacing: -.01em; }
+.table thead th { font-size: .7rem; letter-spacing: .04em; color: var(--tblr-secondary); background: #f8fafc; }
+.table td { vertical-align: middle; }
+.thumb { width: 2.5rem; height: 2.5rem; object-fit: cover; border-radius: .4rem; background: #eef2f7; }
+.thumb-lg { width: 4.5rem; height: 4.5rem; }
+.text-teal { color: var(--tblr-teal) !important; }
+.bg-teal-lt { background: rgba(var(--tblr-teal-rgb), .1) !important; color: var(--tblr-teal) !important; }
+.chart-box { position: relative; height: 260px; }
+.empty-state { padding: 2.5rem 1rem; }
+.empty-state .empty-icon { font-size: 2rem; color: var(--tblr-secondary); }
+.size-row + .size-row { margin-top: .5rem; }
+.min-w-0 { min-width: 0; }
+
+@media (max-width: 767.98px) {
+    .admin-topbar .form-control { min-width: 0; }
+}

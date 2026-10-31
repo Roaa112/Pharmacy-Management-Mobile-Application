@@ -3,6 +3,7 @@
 namespace App\Modules\Cart\Repositories;
 
 use App\Models\Cart;
+use App\Support\Money;
 use App\Modules\Shared\Repositories\BaseRepository;
 
 class CartRepository extends BaseRepository
@@ -29,7 +30,7 @@ class CartRepository extends BaseRepository
         $cartItem->product_quantity = min($cartItem->product_quantity + $data['product_quantity'], $availableStock);
         $cartItem->price_at_time = $data['price_at_time'];
         $cartItem->original_price = $data['original_price'];
-        $cartItem->total_price = $cartItem->product_quantity * $cartItem->price_at_time;
+        $cartItem->total_price = Money::fromMinor(Money::toMinor($cartItem->price_at_time) * $cartItem->product_quantity);
         $cartItem->save();
     } else {
         $cartItem = Cart::create($data);
