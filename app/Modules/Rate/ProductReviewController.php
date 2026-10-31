@@ -5,6 +5,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\ProductReview;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class ProductReviewController extends Controller
 {
@@ -28,7 +29,7 @@ class ProductReviewController extends Controller
             ],
             [
                 'rate' => $validated['rate'],
-                'review' => $validated['review'],
+                'review' => $validated['review'] ?? null,
             ]
         );
 

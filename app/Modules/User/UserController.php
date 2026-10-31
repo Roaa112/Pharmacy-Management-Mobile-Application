@@ -198,18 +198,20 @@ class UserController extends Controller
         return successJsonResponse(new UserResource($user), __('user.success.create_user'));
     }
 
-    // public function verify(VerifyOtpRequest $request)
-    // {
-    //     $user = $this->userService->verifyOtp($request->email, $request->otp_code);
+    public function verify(VerifyOtpRequest $request)
+    {
+        $user = $this->findUserWithValidOtp($request->email, $request->otp_code);
 
-    //     if (! $user) {
-    //         return response()->json(['message' => 'Invalid or expired OTP'], 422);
-    //     }
+        if (! $user) {
+            return response()->json(['message' => 'Invalid or expired OTP'], 422);
+        }
 
-    //     return response()->json([
-    //         'message' => 'Account verified successfully!',
-    //     ]);
-    // }
+        $user->forceFill(['is_verified' => true, 'otp_code' => null, 'otp_expires_at' => null])->save();
+
+        return response()->json([
+            'message' => 'Account verified successfully!',
+        ]);
+    }
 
     public function login(LoginRequest $request){
         return response()->json(

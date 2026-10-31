@@ -277,7 +277,8 @@ class ReturnQuarantineAndPointsTest extends TestCase
     {
         $half = $this->completedOrder();
         $this->accept($this->requestReturn($half, 50));
-        $this->assertSame(50, LoyaltyPointReversal::where('order_id', $half->id)->sum('points'));
+        // SUM() is a string on MySQL and an integer on SQLite.
+        $this->assertSame(50, (int) LoyaltyPointReversal::where('order_id', $half->id)->sum('points'));
 
         $full = $this->completedOrder();
         $this->accept($this->requestReturn($full, 100));

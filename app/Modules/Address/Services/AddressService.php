@@ -2,6 +2,8 @@
 
 namespace App\Modules\Address\Services;
 
+use App\Models\Address;
+use Illuminate\Support\Facades\DB;
 use App\Modules\Address\Resources\AddressCollection;
 use App\Modules\Address\Repositories\AddressesRepository;
 use App\Modules\Address\Requests\ListAllAddressesRequest;
@@ -16,20 +18,38 @@ class AddressService
     {
 
         $Address = $this->constructAddressModel($request);
-        return $this->addresssRepository->create($Address);
+
+        return DB::transaction(function () use ($Address) {
+            if ($Address['is_default']) {
+                $this->clearDefault($Address['user_id']);
+            }
+
+            return $this->addresssRepository->create($Address);
+        });
     }
 
  public function updateAddress($id, $request)
 {
     $Address = $this->constructAddressModel($request, true);
-    $updatedAddress = $this->addresssRepository->update($id, $Address);
 
-    if (!$updatedAddress) {
-        return null;
-    }
+    return DB::transaction(function () use ($id, $Address) {
+        if ($Address['is_default']) {
+            $this->clearDefault(Address::whereKey($id)->value('user_id'), $id);
+        }
 
-    return $updatedAddress;
+        return $this->addresssRepository->update($id, $Address);
+    });
 }
+
+    /**
+     * A customer has at most one default address.
+     */
+    private function clearDefault(?int $userId, $exceptId = null): void
+    {
+        Address::where('user_id', $userId)
+            ->when($exceptId, fn ($q) => $q->whereKeyNot($exceptId))
+            ->update(['is_default' => false]);
+    }
 
 
 

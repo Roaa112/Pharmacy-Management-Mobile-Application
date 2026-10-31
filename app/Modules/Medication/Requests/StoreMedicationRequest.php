@@ -18,7 +18,7 @@ class StoreMedicationRequest extends FormRequest
             'quantity_per_time' => 'required|integer|min:1',
             'repeat_type' => 'required|in:every_day,specific_days,once',
             'times' => 'required|array|min:1',
-            'times.*' => 'required',
+            'times.*' => 'required|date_format:H:i,H:i:s',
             'days' => 'nullable|array',
             'days.*' => 'in:saturday,sunday,monday,tuesday,wednesday,thursday,friday',
         ];

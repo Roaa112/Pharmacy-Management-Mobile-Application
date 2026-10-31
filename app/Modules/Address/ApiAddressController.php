@@ -3,6 +3,7 @@
 namespace App\Modules\Address;
 
 use App\Models\Address;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Request;
@@ -96,11 +97,13 @@ public function toggleDefault(HttpRequest $request, $id)
         // لو هو default بالفعل، خليه false فقط
         $address->update(['is_default' => false]);
     } else {
-        // أول حاجة: خلي كل العناوين للمستخدم false
-        Address::where('user_id', $userId)->update(['is_default' => false]);
+        DB::transaction(function () use ($address, $userId) {
+            // أول حاجة: خلي كل العناوين للمستخدم false
+            Address::where('user_id', $userId)->update(['is_default' => false]);
 
-        // بعدين: خليه هو default
-        $address->update(['is_default' => true]);
+            // بعدين: خليه هو default
+            $address->update(['is_default' => true]);
+        });
     }
 
     return response()->json([

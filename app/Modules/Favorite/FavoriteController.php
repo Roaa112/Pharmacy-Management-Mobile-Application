@@ -32,13 +32,20 @@ class FavoriteController extends Controller
         if ($favorite) {
             $favorite->delete();
             return response()->json(['message' => 'Removed from favorites']);
-        } else {
-            Favorite::create([
-                'user_id' => $user->id,
-                'product_id' => $productId,
-            ]);
-            return response()->json(['message' => 'Added to favorites']);
         }
+
+        // Only products that are in the shop can be added (deleted ones are excluded by SoftDeletes).
+        if (!ctype_digit((string) $productId) || !Product::whereKey($productId)->exists()) {
+            return response()->json(['message' => 'Product not found.'], 404);
+        }
+
+        // firstOrCreate copes with a double tap racing on the unique (user_id, product_id) index.
+        Favorite::firstOrCreate([
+            'user_id' => $user->id,
+            'product_id' => (int) $productId,
+        ]);
+
+        return response()->json(['message' => 'Added to favorites']);
     }
 
 

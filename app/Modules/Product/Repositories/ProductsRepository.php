@@ -6,6 +6,7 @@ use App\Models\Product;
 use App\Models\OrderItem;
 use App\Models\ProductSize;
 use App\Models\StockMovement;
+use App\Support\TableColumns;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use App\Modules\Shared\Repositories\BaseRepository;
@@ -91,8 +92,8 @@ class ProductsRepository extends BaseRepository
         }
 
         // ✅ تطبيق الترتيب
-        $sortBy = $queryCriteria['sortBy'] ?? 'id';
-        $sort = $queryCriteria['sort'] ?? 'DESC';
+        $sortBy = TableColumns::orDefault('products', $queryCriteria['sortBy'] ?? 'id');
+        $sort = strtolower((string) ($queryCriteria['sort'] ?? 'DESC')) === 'asc' ? 'asc' : 'desc';
         $query->orderBy($sortBy, $sort);
 
         // ✅ حساب العدد الكلي قبل limit
@@ -259,10 +260,20 @@ class ProductsRepository extends BaseRepository
 
 
         // تطبيق لفلات
-        if (!empty($queryCriteria['filters'])) {
+        if (!empty($queryCriteria['filters']) && is_array($queryCriteria['filters'])) {
             foreach ($queryCriteria['filters'] as $column => $condition) {
+                // Filter keys and operators come from the query string: only real product
+                // columns and plain comparisons are allowed.
+                if (!TableColumns::has('products', $column) || !is_array($condition)) {
+                    continue;
+                }
+
                 $operator = $condition['operator'] ?? '=';
                 $value = $condition['value'] ?? null;
+
+                if (!in_array($operator, ['=', '!=', 'like', '>', '>=', '<', '<='], true) || is_array($value)) {
+                    continue;
+                }
 
                 if ($operator === 'like') {
                     $query->where($column, 'like', $value);
@@ -277,8 +288,8 @@ class ProductsRepository extends BaseRepository
         }
 
         // لترتيب
-        if (!empty($queryCriteria['sortBy'])) {
-            $sort = $queryCriteria['sort'] ?? 'asc';
+        if (!empty($queryCriteria['sortBy']) && TableColumns::has('products', $queryCriteria['sortBy'])) {
+            $sort = strtolower((string) ($queryCriteria['sort'] ?? 'asc')) === 'desc' ? 'desc' : 'asc';
             $query->orderBy($queryCriteria['sortBy'], $sort);
         }
 

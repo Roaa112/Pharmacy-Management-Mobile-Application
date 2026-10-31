@@ -8,8 +8,8 @@ class VerifyOtpRequest extends FormRequest
     public function rules(): array
     {
         return [
-          
-            'otp_code' => 'required|string',
+            'email' => 'required|email',
+            'otp_code' => 'required|digits:6',
         ];
     }
 }

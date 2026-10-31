@@ -136,9 +136,12 @@ class ApiProductController extends Controller
         $sort = strtoupper($request->get('sort', 'DESC'));
         $sortBy = $request->get('sortBy', 'total_sold');
 
-        // Whitelist of sortable columns to prevent SQL injection
-        $allowedSortBy = ['total_sold', 'product_id', 'id'];
-        if (!in_array($sortBy, $allowedSortBy)) {
+        // Whitelist of sortable columns to prevent SQL injection. Rows are grouped per product,
+        // so "id" means the product id (order_items.id is not valid in a GROUP BY on MySQL).
+        if ($sortBy === 'id') {
+            $sortBy = 'product_id';
+        }
+        if (!in_array($sortBy, ['total_sold', 'product_id'], true)) {
             $sortBy = 'total_sold';
         }
 

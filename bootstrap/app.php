@@ -46,6 +46,9 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         // Apply the API rate limiter to both /api/* and /api/v1/*.
         $middleware->throttleApi();
+
+        // Drop paging/sorting values that would make listing queries fail.
+        $middleware->api(append: [\App\Http\Middleware\SanitizeListingParameters::class]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

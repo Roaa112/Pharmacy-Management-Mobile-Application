@@ -3,6 +3,7 @@
 namespace App\Modules\Shared\Repositories;
 
 use App\Modules\Shared\Repositories\BaseRepositoryInterface;
+use App\Support\TableColumns;
 use Illuminate\Database\Eloquent\Model;
 
 class BaseRepository implements BaseRepositoryInterface
@@ -84,8 +85,8 @@ public function getModel(): Model
     {
         $limit = data_get($queryCriteria, 'limit', 10);
         $offset = data_get($queryCriteria, 'offset', 0);
-        $sortBy = data_get($queryCriteria, 'sortBy', 'id');
-        $sort = data_get($queryCriteria, 'sort', 'DESC');
+        $sortBy = TableColumns::orDefault($this->model->getTable(), data_get($queryCriteria, 'sortBy', 'id'));
+        $sort = strtolower((string) data_get($queryCriteria, 'sort', 'DESC')) === 'asc' ? 'asc' : 'desc';
         $filters = data_get($queryCriteria, 'filters', []);
         if (!empty($filters)) {
             $query = $query->where($filters);
@@ -100,8 +101,8 @@ public function getModel(): Model
     {
         $limit = data_get($queryCriteria, 'limit', 10);
         $offset = data_get($queryCriteria, 'offset', 0);
-        $sortBy = data_get($queryCriteria, 'sortBy', 'id');
-        $sort = data_get($queryCriteria, 'sort', 'DESC');
+        $sortBy = TableColumns::orDefault($this->model->getTable(), data_get($queryCriteria, 'sortBy', 'id'));
+        $sort = strtolower((string) data_get($queryCriteria, 'sort', 'DESC')) === 'asc' ? 'asc' : 'desc';
         $filters = data_get($queryCriteria, 'filters', []);
         if (!empty($filters)) {
             $query = $query->whereLike($filters);
