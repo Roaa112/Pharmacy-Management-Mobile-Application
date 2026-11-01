@@ -18,7 +18,7 @@ class AddressesRepository extends BaseRepository
 
     $addresses = collect($result['data']);
 
-    $pharmacyUrl = \App\Models\Setting::first()?->map_location_url;
+    $pharmacyUrl = \App\Models\Setting::current()->map_location_url;
 
     if ($pharmacyUrl) {
         // تحقق إذا كان فيه عنوان default فعلاً

@@ -9,6 +9,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Support\Facades\Storage;
 use App\Models\{Order, OrderItem, Cart, Address, DeliveryPrice, Setting, DiscountRule};
 use App\Models\ReturnRequest;
+use App\Models\AdminAuditLog;
 use App\Support\Money;
 use App\Modules\Orders\Services\ReturnDecisionService;
 use DomainException;
@@ -34,15 +35,25 @@ public function store(Request $request)
     // A return can only be requested for one of the caller's own orders.
     // An order with an accepted (partial) return is hidden from the order list, but more of it
     // may still be returned (decision D2: several partial refunds), up to what was paid.
-    $order = Order::withoutGlobalScope('hide_refunded_orders_for_api')->where('user_id', auth()->id())->find($request->order_id);
+    $order = Order::where('user_id', auth()->id())->find($request->order_id);
 
     if (!$order) {
-        return response()->json(['message' => 'الطلب غير موجود'], 404);
+        return response()->json(['message' => api_trans('returns.order_not_found')], 404);
     }
 
     // A canceled order was never delivered or paid for, so there is nothing to return.
     if ($order->status === 'canceled') {
-        return response()->json(['message' => 'لا يمكن إرجاع طلب ملغي'], 422);
+        return response()->json(['message' => api_trans('returns.canceled_order'), 'code' => 'order_canceled'], 422);
+    }
+
+    // Return window (settings.return_window_days). Unset = no time limit, as before.
+    if ($windowDays = Setting::current()->returnWindowDays()) {
+        if ($order->status !== 'completed') {
+            return response()->json(['message' => api_trans('returns.not_completed'), 'code' => 'order_not_completed'], 422);
+        }
+        if (($order->completed_at ?? $order->updated_at)->copy()->addDays($windowDays)->isPast()) {
+            return response()->json(['message' => api_trans('returns.window_closed', ['days' => $windowDays]), 'code' => 'return_window_closed'], 422);
+        }
     }
 
     // All refunds requested for an order (pending or accepted) cannot exceed what was paid.
@@ -55,7 +66,7 @@ public function store(Request $request)
     if ($request->filled('refund_amount')
         && $alreadyRequestedMinor + Money::toMinor($request->refund_amount) > Money::toMinor($order->total_price)) {
         return response()->json([
-            'message' => 'قيمة الاسترجاع أكبر من قيمة الطلب',
+            'message' => api_trans('returns.exceeds_total'),
             'errors' => ['refund_amount' => ['The refund amount may not be greater than the order total.']],
         ], 422);
     }
@@ -72,12 +83,13 @@ public function store(Request $request)
 
     if ($request->hasFile('images')) {
         foreach ($request->file('images') as $image) {
-            $path = $image->store('return_images', 'public');
+            // Private disk: served only through an authorised route.
+            $path = $image->store('return_images', 'local');
             $return->images()->create(['path' => $path]);
         }
     }
 
-    return response()->json(['message' => 'تم إرسال طلب المرتجع بنجاح', 'data' => $return], 201);
+    return response()->json(['message' => api_trans('returns.created'), 'data' => $return], 201);
 }
 
 public function index()
@@ -104,12 +116,12 @@ public function cancel($id)
 {
     $return = ReturnRequest::where('user_id', auth()->id())->findOrFail($id);
     if ($return->status !== 'pending') {
-        return response()->json(['message' => 'لا يمكن إلغاء الطلب بعد معالجته'], 400);
+        return response()->json(['message' => api_trans('returns.cannot_cancel')], 400);
     }
 
     $return->update(['status' => 'canceled']);
 
-    return response()->json(['message' => 'تم إلغاء طلب المرتجع بنجاح']);
+    return response()->json(['message' => api_trans('returns.canceled')]);
 }
 
 
@@ -156,7 +168,8 @@ public function cancel($id)
         ]);
 
         try {
-            $decisions->accept((int) $id, $request->input('approved_amount'), $request->input('quantities', []), auth('admin')->id());
+            $return = $decisions->accept((int) $id, $request->input('approved_amount'), $request->input('quantities', []), auth('admin')->id());
+            AdminAuditLog::record('return.accept', $return, ['approved_amount' => $return->approved_amount]);
         } catch (DomainException $e) {
             return redirect()->back()->with('error', $e->getMessage());
         }
@@ -169,7 +182,8 @@ public function cancel($id)
         $request->validate(['reason' => 'nullable|string|max:2000']);
 
         try {
-            $decisions->reject((int) $id, $request->reason, auth('admin')->id());
+            $return = $decisions->reject((int) $id, $request->reason, auth('admin')->id());
+            AdminAuditLog::record('return.reject', $return);
         } catch (DomainException $e) {
             return redirect()->back()->with('error', $e->getMessage());
         }

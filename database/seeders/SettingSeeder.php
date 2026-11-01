@@ -6,7 +6,7 @@ use App\Models\Setting;
 use Illuminate\Database\Seeder;
 
 /**
- * The single settings row the app reads with Setting::first(). Created only when there is none,
+ * The single settings row (Setting::current()). Created only when there is none,
  * so running the seeder again never overwrites what the admin saved.
  */
 class SettingSeeder extends Seeder
@@ -32,8 +32,6 @@ class SettingSeeder extends Seeder
             'spend_x' => 100,
             'get_y' => 5,
             'points_validity_days' => 30,
-            'zaincash' => '07800000000',
-            'keycard' => '0000000000',
         ]);
     }
 }

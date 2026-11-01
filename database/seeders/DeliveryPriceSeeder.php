@@ -2,7 +2,11 @@
 
 namespace Database\Seeders;
 
+use App\Models\City;
+use App\Models\Country;
 use App\Models\DeliveryPrice;
+use App\Models\DeliveryZone;
+use App\Models\DeliveryZoneLocation;
 use Illuminate\Database\Seeder;
 
 /**
@@ -30,8 +34,22 @@ class DeliveryPriceSeeder extends Seeder
             'Red Sea' => 120,
         ];
 
+        $country = Country::default();
+
         foreach ($prices as $governorate => $price) {
+            // Legacy table, kept for reference; checkout prices through zones and rates.
             DeliveryPrice::firstOrCreate(['governorate' => $governorate], ['price' => $price]);
+
+            // One zone per governorate covering the city of that name, as the migration did for
+            // existing prices. Zones the admin already has are left alone.
+            $city = City::named($governorate)->first() ?? City::create(['name' => $governorate, 'country_id' => $country?->id]);
+            if (DeliveryZoneLocation::where('city_id', $city->id)->whereNull('area_id')->exists()) {
+                continue;
+            }
+
+            $zone = DeliveryZone::create(['country_id' => $city->country_id ?? $country?->id, 'name' => $governorate]);
+            $zone->locations()->create(['city_id' => $city->id]);
+            $zone->rates()->create(['fee' => $price, 'eta_min_days' => 1, 'eta_max_days' => 3]);
         }
     }
 }

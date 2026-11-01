@@ -42,7 +42,7 @@ class CatalogApiTest extends TestCase
         Banner::create(['title_en' => 'Sale', 'title_ar' => 'تخفيض', 'image' => 'banners/a.png', 'status' => 1, 'order_of_appearance' => 1]);
         OpeningAd::create(['image' => 'ads/a.png', 'is_active' => true]);
         Setting::create(['points_validity_days' => 30]);
-        $this->makeDeliveryPrice('Baghdad', 5);
+        $this->makeDeliveryPrice('Cairo', 5);
 
         // One sale so the best-selling endpoints have data.
         $this->makeOrder(User::factory()->create(), $this->product->sizes()->first(), quantity: 3);

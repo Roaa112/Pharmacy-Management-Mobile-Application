@@ -28,7 +28,8 @@ class MedicationService
             'notes' => $data['notes'] ?? null,
             'quantity_per_time' => $data['quantity_per_time'],
             'repeat_type' => $data['repeat_type'],
-            'image_path' => isset($data['image']) ? $data['image']->store('medications', 'public') : null,
+            // Private disk: served through signed links only.
+            'image_path' => isset($data['image']) ? $data['image']->store('medications', 'local') : null,
         ]);
 
         $this->repo->addTimes($medication, $data['times']);
@@ -43,7 +44,7 @@ class MedicationService
    public function update(Medication $medication, array $data)
 {
     $imagePath = isset($data['image'])
-        ? $data['image']->store('medications', 'public')
+        ? $data['image']->store('medications', 'local')
         : $medication->image_path; // لو ما في صورة جديدة، خلّي القديمة
 
     // كل التعديل أو لا شيء، حتى لا يبقى الدواء بدون مواعيد لو فشل جزء

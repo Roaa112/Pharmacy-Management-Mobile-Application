@@ -2,19 +2,8 @@
 
 namespace App\Modules\OpeningAd\Requests;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rules\Enum;
-
-class UpdateOpeningAdRequest extends FormRequest
+/** Editing keeps the current image unless a new one is uploaded. */
+class UpdateOpeningAdRequest extends StoreOpeningAdRequest
 {
-    public function rules(): array
-    {
-
-        return [
-
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-            'is_active' => 'sometimes|boolean',
-
-        ];
-    }
+    protected bool $imageRequired = false;
 }

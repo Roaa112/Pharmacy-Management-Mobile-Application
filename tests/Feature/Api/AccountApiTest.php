@@ -18,7 +18,7 @@ class AccountApiTest extends TestCase
         return $this->postJson('/api/user/register', array_merge([
             'name' => 'Sara',
             'email' => 'sara@example.com',
-            'phone' => '07700000001',
+            'phone' => '01000000001',
             'password' => 'secret-pass',
             'confirm_password' => 'secret-pass',
         ], $overrides));
@@ -45,7 +45,7 @@ class AccountApiTest extends TestCase
         $this->register(['email' => 'not-an-email'])->assertStatus(422)->assertJsonValidationErrors('email');
 
         $this->register()->assertOk();
-        $this->register(['phone' => '07700000002'])->assertStatus(422)->assertJsonValidationErrors('email');
+        $this->register(['phone' => '01000000002'])->assertStatus(422)->assertJsonValidationErrors('email');
         $this->register(['email' => 'other@example.com'])->assertStatus(422)->assertJsonValidationErrors('phone');
 
         $this->assertSame(1, User::count());
@@ -133,15 +133,15 @@ class AccountApiTest extends TestCase
 
     public function test_profile_update_changes_own_profile_and_validates_uniqueness(): void
     {
-        $user = User::factory()->create(['phone' => '07700000001']);
-        $other = User::factory()->create(['email' => 'taken@example.com', 'phone' => '07700000009']);
+        $user = User::factory()->create(['phone' => '01000000001']);
+        $other = User::factory()->create(['email' => 'taken@example.com', 'phone' => '01000000009']);
         Sanctum::actingAs($user);
 
-        $this->putJson("/api/user/update/{$user->id}", ['name' => 'New', 'email' => $user->email, 'phone' => '07700000001'])
+        $this->putJson("/api/user/update/{$user->id}", ['name' => 'New', 'email' => $user->email, 'phone' => '01000000001'])
             ->assertOk()
             ->assertJsonPath('data.name', 'New');
 
-        $this->putJson("/api/user/update/{$user->id}", ['name' => 'New', 'email' => 'taken@example.com', 'phone' => '07700000001'])
+        $this->putJson("/api/user/update/{$user->id}", ['name' => 'New', 'email' => 'taken@example.com', 'phone' => '01000000001'])
             ->assertStatus(422)->assertJsonValidationErrors('email');
 
         $this->putJson("/api/user/update/{$other->id}", ['name' => 'Hacked', 'email' => 'x@example.com', 'phone' => '1'])

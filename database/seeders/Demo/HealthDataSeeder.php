@@ -2,7 +2,12 @@
 
 namespace Database\Seeders\Demo;
 
+use App\Jobs\SendHealthReminder;
 use App\Models\Child;
+use App\Models\DeviceToken;
+use App\Models\NotificationDelivery;
+use App\Models\Vaccine;
+use App\Modules\HealthService\Services\HealthReminderService;
 use App\Models\User;
 use App\Modules\HealthService\Services\HealthService;
 use App\Support\StoreClock;
@@ -86,5 +91,30 @@ class HealthDataSeeder extends Seeder
             $due = $child->vaccines()->where('scheduled_date', '<=', $today)->orderBy('scheduled_date')->get();
             $due->slice(0, -1)->each->update(['is_completed' => true]);
         }
+
+        $this->seedReminders($parent);
+    }
+
+    /**
+     * A registered phone and one reminder already sent (log push driver), so the app's
+     * notification history and the dashboard's reminder log have something to show.
+     */
+    private function seedReminders(User $parent): void
+    {
+        DeviceToken::firstOrCreate(['token_hash' => DeviceToken::hashOf('demo-device-token-'.$parent->id)], [
+            'user_id' => $parent->id, 'token' => 'demo-device-token-'.$parent->id, 'platform' => 'android', 'locale' => 'ar', 'last_used_at' => now(),
+        ]);
+
+        $vaccine = Vaccine::whereIn('child_id', $parent->children()->pluck('id'))->where('is_completed', false)->orderBy('scheduled_date')->first();
+        if (!$vaccine) {
+            return;
+        }
+
+        $delivery = NotificationDelivery::firstOrCreate(
+            ['type' => HealthReminderService::VACCINE, 'reference_type' => 'vaccine', 'reference_id' => $vaccine->id, 'occurrence' => $vaccine->scheduled_date->toDateString()],
+            ['user_id' => $parent->id, 'status' => NotificationDelivery::STATUS_SENDING],
+        );
+
+        SendHealthReminder::dispatchSync($delivery->id);
     }
 }

@@ -3,79 +3,74 @@
 
 namespace App\Modules\HealthService;
 
-use Carbon\Carbon;
+use App\Enums\Gender;
+use App\Http\Controllers\Controller;
+use App\Models\AdminAuditLog;
+use App\Models\BloodPressureMeasurement;
+use App\Models\BloodSugarMeasurement;
+use App\Models\BodyWeightResult;
 use App\Models\Child;
 use App\Models\OvulationResult;
-use Illuminate\Support\Facades\DB;
-use App\Models\Vaccine;
-use Illuminate\Http\Request;
 use App\Models\PregnancyCalculation;
-use App\Models\User;
-use App\Models\BodyWeightResult;
-use App\Models\BloodSugarMeasurement;
-use App\Models\BloodPressureMeasurement;
-use App\Models\VaccinationSchedule;
-use App\Http\Controllers\Controller;
+use App\Models\Vaccine;
+use App\Modules\HealthService\Requests\HealthHistoryRequest;
+use App\Modules\HealthService\Requests\StoreBloodPressureRequest;
+use App\Modules\HealthService\Requests\StoreBloodSugarRequest;
+use App\Modules\HealthService\Requests\StoreBodyWeightRequest;
+use App\Modules\HealthService\Requests\StoreChildRequest;
+use App\Modules\HealthService\Requests\StoreOvulationRequest;
+use App\Modules\HealthService\Requests\StorePregnancyRequest;
 use App\Modules\HealthService\Services\HealthService;
 use App\Support\StoreClock;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class HealthServiceController extends Controller
 {
-    protected $healthService;
-
-    public function __construct(HealthService $healthService)
+    public function __construct(protected HealthService $healthService)
     {
-        $this->healthService = $healthService;
     }
+
+    // ------------------------------------------------------------ dashboard
+    // Customers' health records. The routes require the health_data permission; every page view
+    // is written to the audit log.
+
+    private function adminList($query, Request $request, string $page)
+    {
+        AdminAuditLog::record('health.view', null, ['page' => $page, 'search' => $request->input('search')]);
+
+        $search = $request->input('search');
+
+        return $query->when($search, fn ($q) => $q->whereHas('user', fn ($u) => $u->where('name', 'like', "%{$search}%")));
+    }
+
     public function bodyWeight(Request $request)
     {
-        $search = $request->input('search');
-        $query = BodyWeightResult::with('user:id,name');
-
-        if ($search) {
-            $query->whereHas('user', fn($q) => $q->where('name', 'like', "%{$search}%"));
-        }
-
-        $results = $query->latest()->paginate(20);
+        $results = $this->adminList(BodyWeightResult::with('user:id,name'), $request, 'body_weight')->latest()->paginate(20);
 
         return view('dashboard.health-results.body-weight', compact('results'));
     }
 
     public function bloodSugar(Request $request)
     {
-        $search = $request->input('search');
-        $query = BloodSugarMeasurement::with('user:id,name');
-
-        if ($search) {
-            $query->whereHas('user', fn($q) => $q->where('name', 'like', "%{$search}%"));
-        }
-
-        $bloodSugars = $query->latest()->paginate(20);
+        $bloodSugars = $this->adminList(BloodSugarMeasurement::with('user:id,name'), $request, 'blood_sugar')->latest()->paginate(20);
 
         return view('dashboard.health-results.blood-sugar', compact('bloodSugars'));
     }
 
     public function bloodPressure(Request $request)
     {
-        $search = $request->input('search');
-        $query = BloodPressureMeasurement::with('user:id,name');
-
-        if ($search) {
-            $query->whereHas('user', fn($q) => $q->where('name', 'like', "%{$search}%"));
-        }
-
-        $bloodPressures = $query->latest()->paginate(20);
+        $bloodPressures = $this->adminList(BloodPressureMeasurement::with('user:id,name'), $request, 'blood_pressure')->latest()->paginate(20);
 
         return view('dashboard.health-results.blood-pressure', compact('bloodPressures'));
     }
 
     public function ovulation(Request $request)
     {
-        $search = $request->input('search');
-        $ovulations = OvulationResult::with('user:id,name')
+        $ovulations = $this->adminList(OvulationResult::with('user:id,name'), $request, 'ovulation')
             ->select('ovulation_results.*')
             ->join(DB::raw('(SELECT user_id, MAX(id) AS latest_id FROM ovulation_results GROUP BY user_id) latest'), 'ovulation_results.id', '=', 'latest.latest_id')
-            ->when($search, fn($q) => $q->whereHas('user', fn($u) => $u->where('name', 'like', "%{$search}%")))
             ->paginate(20);
 
         return view('dashboard.health-results.ovulation', compact('ovulations'));
@@ -83,92 +78,88 @@ class HealthServiceController extends Controller
 
     public function pregnancy(Request $request)
     {
-        $search = $request->input('search');
-        $query = PregnancyCalculation::with('user:id,name');
-
-        if ($search) {
-            $query->whereHas('user', fn($q) => $q->where('name', 'like', "%{$search}%"));
-        }
-
-        $pregnancies = $query->latest()->paginate(20);
+        $pregnancies = $this->adminList(PregnancyCalculation::with('user:id,name'), $request, 'pregnancy')->latest()->paginate(20);
 
         return view('dashboard.health-results.pregnancy', compact('pregnancies'));
     }
 
     public function children(Request $request)
     {
-        $search = $request->input('search');
-        $query = Child::with(['user:id,name', 'vaccines']);
-
-        if ($search) {
-            $query->whereHas('user', fn($q) => $q->where('name', 'like', "%{$search}%"));
-        }
-
-        $children = $query->latest()->paginate(20);
+        $children = $this->adminList(Child::with(['user:id,name', 'vaccines']), $request, 'children')->latest()->paginate(20);
 
         return view('dashboard.health-results.children', compact('children'));
     }
-    public function getBloodPressure(Request $request)
+
+    // --------------------------------------------------------- measurements
+
+    private function historyResponse($query, HealthHistoryRequest $request)
     {
-        $results = $this->healthService->getBloodPressureData($request->user()->id);
-        return response()->json(['data' => $results]);
+        return response()->json($this->healthService->history(
+            $query,
+            $request->filled('page') ? $request->integer('page') : null,
+            $request->filled('per_page') ? $request->integer('per_page') : null,
+        ));
     }
 
-    public function getBloodSugar(Request $request)
+    public function getBloodPressure(HealthHistoryRequest $request)
     {
-        $results = $this->healthService->getBloodSugarData($request->user()->id);
-        return response()->json(['data' => $results]);
+        return $this->historyResponse($this->healthService->bloodPressureQuery($request->user()->id), $request);
     }
 
-    public function getWeight(Request $request)
+    public function getBloodSugar(HealthHistoryRequest $request)
     {
-        $results = $this->healthService->getWeightData($request->user()->id);
-        return response()->json(['data' => $results]);
+        return $this->historyResponse($this->healthService->bloodSugarQuery($request->user()->id), $request);
     }
 
-
-
-    public function getOvulationResults()
+    public function getWeight(HealthHistoryRequest $request)
     {
-        $results = $this->healthService->getAllOvulationResults();
-        return response()->json(['data' => $results]);
+        return $this->historyResponse($this->healthService->weightQuery($request->user()->id), $request);
     }
-    public function storeOvulation(Request $request)
-    {
-        $validated = $request->validate([
-            'start_day_of_cycle' => 'required|date',
-            'cycle_length' => 'required|integer|min:21|max:35',
-            'period_length' => 'required|integer|min:3|max:10',
-        ]);
 
-        return response()->json(
-            $this->healthService->calculateOvulation($request->user()->id, $validated)
-        );
+    public function storeBodyWeight(StoreBodyWeightRequest $request)
+    {
+        return response()->json($this->healthService->calculateBodyWeight($request->user()->id, $request->validated()));
     }
+
+    public function storeBloodSugar(StoreBloodSugarRequest $request)
+    {
+        return response()->json($this->healthService->storeBloodSugar($request->user()->id, $request->validated()));
+    }
+
+    public function storeBloodPressure(StoreBloodPressureRequest $request)
+    {
+        return response()->json($this->healthService->storeBloodPressure($request->user()->id, $request->validated()));
+    }
+
+    // ------------------------------------------------------------ ovulation
+
+    public function storeOvulation(StoreOvulationRequest $request)
+    {
+        return response()->json($this->healthService->calculateOvulation($request->user()->id, $request->validated()));
+    }
+
     public function getCycleForCurrentMonth(Request $request)
     {
-        $userId = $request->user()->id;
-
-        $result = OvulationResult::where('user_id', $userId)
+        $result = OvulationResult::where('user_id', $request->user()->id)
             ->orderByDesc('start_day_of_cycle')
             ->first();
 
         if (!$result) {
-            return ['message' => 'محتاج تدخل بيانات الدورة لأول مرة'];
+            return ['message' => api_trans('health.messages.cycle_no_data'), 'code' => 'no_cycle_data'];
         }
 
         $startDate = $result->start_day_of_cycle->copy()->startOfDay();
         $cycleLength = (int) $result->cycle_length;
         $periodLength = (int) ($result->result['period_length'] ?? 5);
 
-        // اليوم بتوقيت الصيدلية (وليس UTC) حتى يتغير "اليوم" عند منتصف الليل المحلي
+        // "Today" on the pharmacy's clock (not UTC), so it changes at local midnight.
         $today = StoreClock::now()->startOfDay();
 
-        // الشهور اللي عايزين نجيبها (السابق / الحالي / القادم)
+        // Previous, current and next month.
         $rangeStart = $today->copy()->subMonthNoOverflow()->startOfMonth();
         $rangeEnd = $today->copy()->addMonthNoOverflow()->endOfMonth();
 
-        // بداية الدورة اللي فيها أول يوم في النطاق (موجب = بعد تاريخ البداية المسجل)
+        // Start of the cycle that contains the first day of the range (projected either way).
         $cyclesUntilRange = (int) floor($startDate->diffInDays($rangeStart, false) / $cycleLength);
         $cycleStart = $startDate->copy()->addDays($cyclesUntilRange * $cycleLength);
 
@@ -176,7 +167,7 @@ class HealthServiceController extends Controller
         $todayInfo = null;
 
         while ($cycleStart <= $rangeEnd) {
-            $ovulationDay = $cycleStart->copy()->addDays($cycleLength - 14);
+            $ovulationDay = $this->healthService->ovulationDay($cycleStart, $cycleLength);
 
             for ($i = 0; $i < $cycleLength; $i++) {
                 $day = $cycleStart->copy()->addDays($i);
@@ -199,6 +190,7 @@ class HealthServiceController extends Controller
                     'phase_code' => $info['phase_code'],
                     'pregnancy_chance' => $info['pregnancy_chance'],
                     'is_today' => $isToday,
+                    'phase_label' => $info['phase_label'],
                 ];
             }
 
@@ -206,242 +198,83 @@ class HealthServiceController extends Controller
         }
 
         return [
-            'message' => 'تم حساب الدورة ',
+            'message' => api_trans('health.messages.cycle_calculated'),
             'months' => collect($allDays)->groupBy('month'),
             'today' => [
                 'date' => $today->toDateString(),
-                'phase' => $todayInfo['phase'] ?? 'غير معروف',
+                'phase' => $todayInfo['phase'] ?? __('health.legacy.ovulation_calendar.unknown', [], 'ar'),
                 'phase_code' => $todayInfo['phase_code'] ?? 'unknown',
                 'pregnancy_chance' => $todayInfo['pregnancy_chance'] ?? '0%',
+                'phase_label' => $todayInfo['phase_label'] ?? api_trans('health.phase.unknown'),
             ],
         ];
     }
 
+    // ------------------------------------------------------------ pregnancy
 
-
-
-
-    public function storeBodyWeight(Request $request)
+    public function storePregnancy(StorePregnancyRequest $request)
     {
-        $data = $request->validate([
-            'height' => 'required|numeric|gt:0|max:300',
-            'weight' => 'required|numeric|gt:0|max:1000',
-            'unit' => 'required|string|max:20',
-        ]);
-        return response()->json(
-            $this->healthService->calculateBodyWeight($request->user()->id, $data)
-        );
+        return response()->json($this->healthService->calculatePregnancy($request->user()->id, $request->validated()));
     }
 
-    public function storeBloodSugar(Request $request)
-    {
-        $data = $request->validate([
-            'value' => 'required|numeric|min:0|max:2000',
-            'condition_type' => 'required|string|max:255',
-            'measured_at' => 'required|date',
-        ]);
-        return response()->json(
-            $this->healthService->storeBloodSugar($request->user()->id, $data)
-        );
-    }
-
-    public function storeBloodPressure(Request $request)
-    {
-        $data = $request->validate([
-            'systolic' => 'required|integer|min:1|max:400',
-            'diastolic' => 'required|integer|min:1|max:300',
-            'condition_type' => 'required|string|max:255',
-            'measured_at' => 'required|date',
-        ]);
-        return response()->json(
-            $this->healthService->storeBloodPressure($request->user()->id, $data)
-        );
-    }
-
-    public function storePregnancy(Request $request)
-    {
-        $data = $request->validate([
-            // "today" on the pharmacy's clock, so a local date entered after midnight is not "future".
-            'last_period_date' => 'required|date|before_or_equal:' . StoreClock::now()->toDateString(),
-        ]);
-        return response()->json(
-            $this->healthService->calculatePregnancy($request->user()->id, $data)
-        );
-    }
     public function getCurrentPregnancyStage(Request $request)
     {
-        $user = $request->user();
-
-        // جيب آخر حساب م تسجيله للمستخد
-        $pregnancy = PregnancyCalculation::where('user_id', $user->id)->latest()->first();
+        $pregnancy = PregnancyCalculation::where('user_id', $request->user()->id)->latest()->first();
 
         if (!$pregnancy) {
-            return response()->json(['message' => 'لم يتم إدخال تاريخ آخر دورة بعد.'], 404);
+            return response()->json(['message' => api_trans('health.pregnancy.no_data'), 'code' => 'no_pregnancy_data'], 404);
         }
 
-        // نعيد حساب المرلة بناءً على التاريخ المسجل مسبقًا
-        return response()->json(
-            $this->healthService->recalculatePregnancyFromStoredData($pregnancy)
-        );
+        // Recalculated from the stored date, so the stage moves on day by day.
+        return response()->json($this->healthService->recalculatePregnancyFromStoredData($pregnancy));
     }
 
-    // public function storeVaccination(Request $request)
-    // {
-    //     $request->validate([
-    //         'child_name' => 'required|string',
-    //         'gender' => 'required|in:ذكر,نثى',
-    //         'birth_date' => 'required|date',
-    //     ]);
-    //     $birth_date = Carbon::parse($request->birth_date)->format('Y-m-d');
+    // ------------------------------------------------------- children/vaccines
 
-    //     $child = Child::create([
-    //         'user_id' => auth()->id(),
-    //         'child_name' => $request->child_name,
-    //         'gender' => $request->gender,
-    //         'birth_date' => $birth_date,
-    //     ]);
-
-    //     $this->generateDefaultVaccines($child);
-
-    //     return response()->json([
-    //         'message' => 'تم إنشء الطفل وجدول لتطعيمات بنجاح',
-    //         'child' => $child,
-    //     ]);
-    // }
-
-    // protected function generateDefaultVaccines(Child $child)
-    // {
-    //     $defaultVaccines = [
-    //         [
-    //             'name' => 'لقاح عن اولاد',
-    //             'offset' => '0 days',
-    //             'description' => 'لاح الهاب الكبد الفروي B (الجرعة الرية) خلال أول 24 ساة من الولادة.'
-    //         ],
-    //         [
-    //             'name' => 'لقح الأسبوع الأول',
-    //             'offset' => '7 days',
-    //             'description' => 'لقاح شلل الفال الفموي (الرة لصفرية) + لقاح لسل BCG.'
-    //         ],
-    //         [
-    //             'name' => 'لقاح عمر رين',
-    //             'offset' => '2 months',
-    //             'description' => 'الجرعة الأولى من: شلل الأطفال الفموي، لل اأفال العضي الخمسي (الدفتيريا، الكزاز، السعال الديكي، الكبد B، المستدمية النزلية)، الكورت الئوة، الرتا.'
-    //         ],
-    //         [
-    //             'name' => 'قاح مر 4 أشه',
-    //             'offset' => '4 months',
-    //             'description' => 'الجرعة الثانة ن: شلل الطفال الموي، شلل الأطال اعضلي، الخماي، الكورات الرئية، الوتا.'
-    //         ],
-    //         [
-    //             'name' => 'لقا عمر 6 أشر',
-    //             'offset' => '6 months',
-    //             'description' => 'الجعة الثالثة من: شل الطفال افموي، شلل الأطفا الضلي، الخماسي الرتا.'
-    //         ],
-    //         [
-    //             'name' => 'لقاح عم 9 أشه',
-    //             'offset' => '9 months',
-    //             'description' => 'رعة منطة: شلل الطفال الموي + لقا الحصة.'
-    //         ],
-    //         [
-    //             'name' => 'لقاح عم 12 شهر',
-    //             'offset' => '12 months',
-    //             'description' => 'قاح الحبة المخطة (حصبة، صب ألنية، نكاف MMR) + لجرعة المنشطة اولى للمكورات الرية.'
-    //         ],
-    //         [
-    //             'name' => 'لقاح عمر 18 شه',
-    //             'offset' => '18 months',
-    //             'description' => 'جرعة نطة من: شلل الأطال الفموي، شلل الطفل العضلي، الثاثي (DTaP)، الجرعة المشطة الثانية للمكرات الرئوية.'
-    //         ],
-    //         [
-    //             'name' => 'قاح عمر 4-6 سنوات',
-    //             'offset' => '4 years',
-    //             'description' => 'جرعة منشطة أخية: شلل الأطفال الموي، لل الطفال اعضلي، الثاثي (DTaP).'
-    //         ],
-    //     ];
-
-    //     foreach ($defaultVaccines as $vaccine) {
-    //         Vaccine::create([
-    //             'child_id' => $child->id,
-    //             'vaccine_name' => $vaccine['name'],
-    //             'description' => $vaccine['description'],
-    //             'scheduled_date' => \Carbon\Carbon::parse($child->birth_date)->add($vaccine['offset']),
-    //         ]);
-    //     }
-    // }
-
-
-    // public function getVaccines(Child $child)
-    // {
-
-
-    //     return response()->json($child->vaccines);
-    // }
-
-    // public function markAsCompleted(Request $request, Vaccine $vaccine)
-    // {
-    //     $vaccine->update([
-    //         'is_completed' => $request->input('is_completed', true),
-    //     ]);
-
-    //     return response()->json([
-    //         'message' => 'تم تديث حال لتطعيم',
-    //         'vaccine' => $vaccine,
-    //     ]);
-    // }
-
-
-    public function storeVaccination(Request $request)
+    public function storeVaccination(StoreChildRequest $request)
     {
-        $request->validate([
-            'child_name' => 'required|string',
-            'gender' => 'required|in:ذكر,أنثى',
-            'birth_date' => 'required|date',
-        ]);
+        $child = DB::transaction(function () use ($request) {
+            $child = Child::create([
+                'user_id' => $request->user()->id,
+                'child_name' => $request->child_name,
+                // Stored as the Arabic word, as always.
+                'gender' => Gender::fromInput($request->gender)->storedValue(),
+                'birth_date' => Carbon::parse($request->birth_date)->format('Y-m-d'),
+            ]);
 
-        $birth_date = Carbon::parse($request->birth_date)->format('Y-m-d');
+            // The schedule is copied from the dashboard-managed template (a snapshot).
+            $this->healthService->generateDefaultVaccines($child);
 
-        $child = Child::create([
-            'user_id' => auth()->id(),
-            'child_name' => $request->child_name,
-            'gender' => $request->gender,
-            'birth_date' => $birth_date,
-        ]);
-
-        // تليد جدول اتطعيما تلقائيً
-        $this->healthService->generateDefaultVaccines($child);
+            return $child;
+        });
 
         return response()->json([
-            'message' => 'تم إنشاء الطفل وجدول التطعيمات بنجاح',
-            'child' => $child->load('vaccines'),
+            'message' => api_trans('health.messages.child_created'),
+            'child' => $child->load(['vaccines' => fn ($q) => $q->orderBy('scheduled_date')]),
         ]);
     }
 
-    /**
-     * جلب كل الأطفا المتبطين بالمستدم لحالي ع التطعمت الخاصة بكل طفل
-     */
-    public function getVaccines()
+    /** The caller's children with their vaccines (by date) and completion progress. */
+    public function getVaccines(Request $request)
     {
-        $children = Child::where('user_id', auth()->id())
-            ->with(['vaccines' => function ($query) {
-                $query->orderBy('scheduled_date', 'asc');
-            }])
+        $children = Child::where('user_id', $request->user()->id)
+            ->with(['vaccines' => fn ($query) => $query->orderBy('scheduled_date', 'asc')])
             ->get()
             ->map(function ($child) {
                 $total = $child->vaccines->count();
                 $completed = $child->vaccines->where('is_completed', true)->count();
                 $child->progress = $total > 0 ? round(($completed / $total) * 100, 2) : 0;
+
                 return $child;
             });
 
         return response()->json([
-            'message' => 'تم جلب بيانات الأطفال والتطعيمات',
+            'message' => api_trans('health.messages.children_loaded'),
             'children' => $children,
         ]);
     }
 
-    /**
-     * تحدث حال التطعيم عند لتعليم عليه كمتم أو إلغاء التليم
-     */
+    /** Mark a vaccine as given (or undo it). */
     public function markAsCompleted(Request $request, Vaccine $vaccine)
     {
         // The vaccine must belong to one of the caller's children.
@@ -451,31 +284,29 @@ class HealthServiceController extends Controller
             'is_completed' => 'sometimes|boolean',
         ]);
 
+        $completed = (bool) ($validated['is_completed'] ?? true);
+
         $vaccine->update([
-            'is_completed' => $validated['is_completed'] ?? true,
+            'is_completed' => $completed,
+            'completed_at' => $completed ? ($vaccine->completed_at ?? now()) : null,
         ]);
 
         return response()->json([
-            'message' => 'تم تحديث حالة التطعيم',
+            'message' => api_trans('health.messages.vaccine_updated'),
             'vaccine' => $vaccine,
         ]);
     }
-
 
     public function destroychild(Request $request, $id)
     {
         $child = Child::where('user_id', $request->user()->id)->find($id);
 
         if (!$child) {
-            return response()->json([
-                'message' => 'الطفل غير موجود'
-            ], 404);
+            return response()->json(['message' => api_trans('health.messages.child_not_found')], 404);
         }
 
-        $child->delete(); // Cascades to vaccines automatically
+        $child->delete(); // Cascades to vaccines.
 
-        return response()->json([
-            'message' => 'تم حذف الطفل بنجاح'
-        ], 200);
+        return response()->json(['message' => api_trans('health.messages.child_deleted')], 200);
     }
 }

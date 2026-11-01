@@ -4,7 +4,10 @@ namespace Tests\Concerns;
 
 use App\Models\Address;
 use App\Models\Cart;
-use App\Models\DeliveryPrice;
+use App\Models\City;
+use App\Models\Country;
+use App\Models\DeliveryRate;
+use App\Models\DeliveryZone;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
@@ -39,7 +42,7 @@ trait BuildsShop
         ]);
     }
 
-    protected function makeAddress(User $user, string $city = 'Baghdad'): Address
+    protected function makeAddress(User $user, string $city = 'Cairo'): Address
     {
         return Address::create([
             'user_id' => $user->id,
@@ -50,9 +53,18 @@ trait BuildsShop
         ]);
     }
 
-    protected function makeDeliveryPrice(string $governorate = 'Baghdad', float $price = 5): DeliveryPrice
+    /**
+     * A delivery zone covering the city named $governorate, with one rate. (Delivery prices
+     * used to be rows of delivery_prices; checkout now prices through zones and rates.)
+     */
+    protected function makeDeliveryPrice(string $governorate = 'Cairo', float $price = 5, array $rate = []): DeliveryRate
     {
-        return DeliveryPrice::create(['governorate' => $governorate, 'price' => $price]);
+        $country = Country::default();
+        $city = City::named($governorate)->first() ?? City::create(['name' => $governorate, 'country_id' => $country->id]);
+        $zone = DeliveryZone::create(['country_id' => $country->id, 'name' => $governorate]);
+        $zone->locations()->create(['city_id' => $city->id]);
+
+        return $zone->rates()->create(array_merge(['fee' => $price], $rate));
     }
 
     protected function makeOrder(User $user, ProductSize $size, int $quantity = 1, string $status = 'pending'): Order
@@ -77,5 +89,34 @@ trait BuildsShop
         ]);
 
         return $order;
+    }
+
+    /**
+     * An order paid by ZainCash before ZainCash was retired, shaped like the migrated history:
+     * the order keeps payment_method "zaincash" and its receipt; its payment is a legacy
+     * manual transfer. ZainCash itself can no longer be chosen.
+     */
+    protected function makeHistoricalZainCashOrder(User $user, string $paymentStatus = 'awaiting_verification', string $status = 'pending'): Order
+    {
+        $method = \App\Models\PaymentMethod::where('code', 'zaincash')->firstOrFail();
+        $order = $this->makeOrder($user, $this->makeSize(price: 40), 1, $status);
+        $order->forceFill([
+            'payment_method' => 'zaincash',
+            'payment_method_id' => $method->id,
+            'payment_image' => 'payments/zaincash-receipt.jpg',
+            'payment_status' => $paymentStatus,
+        ])->save();
+
+        \App\Models\Payment::create([
+            'order_id' => $order->id,
+            'payment_method_id' => $method->id,
+            'provider' => \App\Models\Payment::PROVIDER_MANUAL_TRANSFER,
+            'internal_reference' => sprintf('PAY-L%08d', $order->id),
+            'amount' => $order->total_price,
+            'status' => $paymentStatus,
+            'receipt_path' => 'payments/zaincash-receipt.jpg',
+        ]);
+
+        return $order->fresh();
     }
 }

@@ -22,10 +22,7 @@ class SettingService
 
     public function updateSetting($id, $request)
     {
-
-        $Setting = $this->constructSettingModel($request);
-
-        return $this->settingsRepository->update($id, $Setting);
+        return $this->settingsRepository->update($id, $this->constructSettingModel($request));
     }
 
     public function deleteSetting($id)
@@ -50,29 +47,9 @@ class SettingService
         return $this->settingsRepository->find($id);
     }
 
-  public function constructSettingModel($request)
-{
-    $SettingModel = [
-        'privacy_policy_ar' => $request['privacy_policy_ar'],
-        'privacy_policy_en' => $request['privacy_policy_en'],
-        'terms_conditions_ar' => $request['terms_conditions_ar'],
-        'terms_conditions_en' => $request['terms_conditions_en'],
-        'facebook' => $request['facebook'],
-        'instagram' => $request['instagram'],
-        'tiktok' => $request['tiktok'],
-        'youtube' => $request['youtube'],
-        'phone_number' => $request['phone_number'],
-        'map_location_url' => $request['map_location_url'],
-
-        'spend_x' => $request['spend_x'],
-        'get_y' => $request['get_y'],
-        'zaincash' => $request['zaincash'],
-        'keycard' => $request['keycard'],
-        'points_validity_days' => $request['points_validity_days'],
-    ];
-
-    return $SettingModel;
-}
-
-
+    /** Only the fields that were sent are written, so saving one section never clears another. */
+    public function constructSettingModel($request)
+    {
+        return array_intersect_key($request, array_flip((new Setting())->getFillable()));
+    }
 }

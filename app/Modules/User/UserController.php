@@ -24,7 +24,9 @@ use Illuminate\Support\Facades\RateLimiter;
 
 class UserController extends Controller
 {
+    // Security limits: code, not dashboard settings.
     private const MAX_OTP_ATTEMPTS = 5;
+    private const OTP_TTL_MINUTES = 10;
 
     public function __construct(private UserService $userService)
     {
@@ -74,15 +76,38 @@ class UserController extends Controller
 
         // Same response whether or not the email exists, so accounts cannot be enumerated.
         if ($user) {
-            $otp = (string) random_int(100000, 999999);
-            $user->otp_code = Hash::make($otp);
-            $user->otp_expires_at = now()->addMinutes(10);
-            $user->save();
-
-            Mail::to($user->email)->send(new SendOtp($otp));
+            $this->sendOtp($user);
         }
 
         return response()->json(['message' => 'If this email is registered, an OTP has been sent to it.']);
+    }
+
+    /** Send a new verification code to an unverified account (same answer whatever the email). */
+    public function resendVerification(Request $request)
+    {
+        $request->validate(['email' => 'required|email']);
+
+        $user = User::where('email', $request->email)->where('is_verified', false)->first();
+        if ($user) {
+            $this->sendOtp($user);
+        }
+
+        return response()->json(['message' => 'If this account needs verifying, a code has been sent to it.']);
+    }
+
+    /** A fresh 6-digit code, stored hashed, valid OTP_TTL_MINUTES. */
+    private function sendOtp(User $user): void
+    {
+        $otp = (string) random_int(100000, 999999);
+        $user->forceFill(['otp_code' => Hash::make($otp), 'otp_expires_at' => now()->addMinutes(self::OTP_TTL_MINUTES)])->save();
+        RateLimiter::clear('otp-attempts:'.$user->id);
+
+        try {
+            Mail::to($user->email)->send(new SendOtp($otp));
+        } catch (\Throwable $e) {
+            // The account exists either way; the user can ask for a new code.
+            report($e);
+        }
     }
 
     public function verifyOtp(Request $request)
@@ -193,6 +218,9 @@ class UserController extends Controller
     }
 
         $user = $this->userService->createUser($request->validated());
+
+        // The verification code the /user/verify endpoint expects (it was never sent before).
+        $this->sendOtp($user);
 
 
         return successJsonResponse(new UserResource($user), __('user.success.create_user'));

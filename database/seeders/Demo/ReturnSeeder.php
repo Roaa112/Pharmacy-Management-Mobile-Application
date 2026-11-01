@@ -24,7 +24,7 @@ class ReturnSeeder extends Seeder
         // Sara sends back the sunscreen from her coupon order: accepted, unit received back.
         $saraOrder = $this->completedOrder('sara@example.com', 'Sunscreen SPF 50+');
         $sunscreen = $saraOrder->items->firstWhere('product_name_en', 'Sunscreen SPF 50+');
-        $accepted = $this->request($saraOrder, 'The product caused skin irritation', $sunscreen->total_price, 'zaincash', 'return_images/sunscreen.png');
+        $accepted = $this->request($saraOrder, 'The product caused skin irritation', $sunscreen->total_price, 'cash', 'return_images/sunscreen.png');
         $decisions->accept($accepted->id, null, [$sunscreen->id => 1], $adminId);
 
         // Youssef's blood pressure monitor: rejected (opened device, outside the return policy).

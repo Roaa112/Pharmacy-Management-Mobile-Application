@@ -19,7 +19,8 @@ use Tests\TestCase;
 /**
  * Decision D7: listing, details, cart and checkout charge one price, from one calculation.
  *
- * The store clock is Asia/Baghdad (UTC+3); flash sale dates are local wall-clock times.
+ * The store clock is Africa/Cairo (UTC+3 on these June dates, Egyptian summer time); flash
+ * sale dates are local wall-clock times.
  * Test times are given in UTC and the sale at the matching local time.
  */
 class FlashSalePricingTest extends TestCase
@@ -33,7 +34,7 @@ class FlashSalePricingTest extends TestCase
     {
         parent::setUp();
 
-        config(['pharmacy.timezone' => 'Asia/Baghdad']);
+        config(['pharmacy.timezone' => 'Africa/Cairo']);
         $this->user = User::factory()->create();
         Sanctum::actingAs($this->user);
 
@@ -146,7 +147,7 @@ class FlashSalePricingTest extends TestCase
     {
         $this->attachFlashSale();
 
-        // 12:30 UTC is 15:30 in Baghdad: outside the 12:00–13:00 local window.
+        // 12:30 UTC is 15:30 in Cairo: outside the 12:00–13:00 local window.
         $this->atUtc('12:30:00');
         $this->assertPriceEverywhere(100);
 
@@ -188,12 +189,17 @@ class FlashSalePricingTest extends TestCase
     public function test_the_coupon_preview_and_checkout_agree_and_use_live_prices(): void
     {
         $this->attachFlashSale();
-        Coupon::create(['code' => 'TEN', 'discount_value' => 10, 'is_active' => true,
+        // A coupon does not stack on a flash sale price unless it is configured to.
+        Coupon::create(['code' => 'PLAIN', 'discount_value' => 10, 'is_active' => true,
+            'start_at' => '2026-06-01 11:00:00', 'end_at' => '2026-06-01 13:00:00']);
+        Coupon::create(['code' => 'TEN', 'discount_value' => 10, 'is_active' => true, 'combines_with_promotions' => true,
             'start_at' => '2026-06-01 11:00:00', 'end_at' => '2026-06-01 13:00:00']); // store time
 
         $this->atUtc('09:30:00');
         $this->postJson('/api/user/cart', ['product_id' => $this->size->product_id, 'product_size' => $this->size->id, 'quantity' => 1])->assertOk();
         Cart::query()->update(['price_at_time' => 1, 'total_price' => 1]); // tampered / stale row
+
+        $this->postJson('/api/user/cart/apply-coupon', ['coupon' => 'PLAIN'])->assertStatus(400)->assertJsonPath('code', 'no_eligible_items');
 
         $this->postJson('/api/user/cart/apply-coupon', ['coupon' => 'TEN'])
             ->assertOk()

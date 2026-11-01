@@ -55,7 +55,7 @@ class PromotionSeeder extends Seeder
             ['product', $product('Glucose Test Strips')->id]
         );
 
-        // A flash sale that is live now (it lasts FlashSale::DURATION_MINUTES) and one tomorrow evening.
+        // A flash sale that is live now (one hour) and one tomorrow evening.
         $this->flashSale($product('Paracetamol 500 mg'), 15, $now->copy()->subMinutes(10));
         $this->flashSale($product('Sunscreen SPF 50+'), 30, $now->copy()->addDay()->setTime(20, 0));
 
@@ -92,6 +92,7 @@ class PromotionSeeder extends Seeder
             'is_active' => true,
             'date' => $startsAt->toDateString(),
             'time' => $startsAt->format('H:i:s'),
+            'ends_at' => $startsAt->copy()->addHour(),
         ]);
 
         $product->forceFill(['saleable_type' => FlashSale::class, 'saleable_id' => $sale->id])->save();

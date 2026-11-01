@@ -18,7 +18,7 @@ use App\Modules\Product\Requests\ListAllProductsRequest;
 class ProductService
 {
     public function __construct(private ProductsRepository $productsRepository) {}
-    private function handleMainImage(array &$data, $request, Product $product = null): void
+    private function handleMainImage(array &$data, $request, ?Product $product = null): void
     {
 
         if ($request->hasFile('image')) {
@@ -146,7 +146,7 @@ class ProductService
     }
 
 
-    private function handlePromotionData(array &$data, $request, Product $product = null): void
+    private function handlePromotionData(array &$data, $request, ?Product $product = null): void
     {
         if ($request->filled('promotion_type')) {
             $data['promotion_type'] = $request->promotion_type;
@@ -338,12 +338,16 @@ class ProductService
 
     // 1. Get highest discount values
     $maxPercentValue = DB::table('discount_rules')
+        // Only rules the promotion engine can apply (active, not archived).
+        ->where('is_active', true)->whereNull('deleted_at')
         ->where('discount_type', 'percent')
         ->where('starts_at', '<=', StoreClock::now())
         ->where('ends_at', '>=', StoreClock::now())
         ->max('discount_value');
 
     $maxFixedValue = DB::table('discount_rules')
+        // Only rules the promotion engine can apply (active, not archived).
+        ->where('is_active', true)->whereNull('deleted_at')
         ->where('discount_type', 'fixed')
         ->where('starts_at', '<=', StoreClock::now())
         ->where('ends_at', '>=', StoreClock::now())
@@ -351,6 +355,8 @@ class ProductService
 
     // 2. Get all rules with highest discount values
     $topPercentRules = DB::table('discount_rules')
+        // Only rules the promotion engine can apply (active, not archived).
+        ->where('is_active', true)->whereNull('deleted_at')
         ->where('discount_type', 'percent')
         ->where('starts_at', '<=', StoreClock::now())
         ->where('ends_at', '>=', StoreClock::now())
@@ -358,6 +364,8 @@ class ProductService
         ->get();
 
     $topFixedRules = DB::table('discount_rules')
+        // Only rules the promotion engine can apply (active, not archived).
+        ->where('is_active', true)->whereNull('deleted_at')
         ->where('discount_type', 'fixed')
         ->where('starts_at', '<=', StoreClock::now())
         ->where('ends_at', '>=', StoreClock::now())
@@ -445,9 +453,12 @@ class ProductService
 
     private function getProductsBytopDiscountRule($ruleId)
     {
+        // Gift and excluded targets do not put a product on sale; a variant target counts for its product.
         $targets = DB::table('discount_rule_targets')
             ->where('discount_rule_id', $ruleId)
-            ->get();
+            ->where('is_gift', false)->where('is_excluded', false)
+            ->get()
+            ->map(fn ($t) => $t->target_type === 'variant' ? (object) ['target_type' => 'product', 'target_id' => DB::table('product_sizes')->where('id', $t->target_id)->value('product_id')] : $t);
 
         $productQuery = Product::query();
 
@@ -463,9 +474,12 @@ class ProductService
             }
         });
 
+        // Listed only when the engine actually discounts the product now (customer, flash sale, exclusions...).
         return $productQuery
             ->with(['sizes', 'productImages', 'brand', 'category'])
-            ->get();
+            ->get()
+            ->filter(fn (Product $product) => $product->discount_type !== null)
+            ->values();
     }
 
 
@@ -576,6 +590,8 @@ class ProductService
 
     // 1. Get top percent and fixed discount rules (active only)
     $topPercentRule = DB::table('discount_rules')
+        // Only rules the promotion engine can apply (active, not archived).
+        ->where('is_active', true)->whereNull('deleted_at')
         ->where('discount_type', 'percent')
         ->where('starts_at', '<=', StoreClock::now())
         ->where('ends_at', '>=', StoreClock::now())
@@ -583,6 +599,8 @@ class ProductService
         ->first();
 
     $topFixedRule = DB::table('discount_rules')
+        // Only rules the promotion engine can apply (active, not archived).
+        ->where('is_active', true)->whereNull('deleted_at')
         ->where('discount_type', 'fixed')
         ->where('starts_at', '<=', StoreClock::now())
         ->where('ends_at', '>=', StoreClock::now())
@@ -650,7 +668,9 @@ private function getProductsByDiscountRule($ruleId)
 {
     $targets = DB::table('discount_rule_targets')
         ->where('discount_rule_id', $ruleId)
-        ->get();
+        ->where('is_gift', false)->where('is_excluded', false)
+        ->get()
+        ->map(fn ($t) => $t->target_type === 'variant' ? (object) ['target_type' => 'product', 'target_id' => DB::table('product_sizes')->where('id', $t->target_id)->value('product_id')] : $t);
 
     $productIds = collect();
 
@@ -670,7 +690,9 @@ private function getProductsByDiscountRule($ruleId)
 
     return Product::with(['sizes', 'productImages', 'brand', 'category'])
         ->whereIn('id', $productIds->unique())
-        ->get();
+        ->get()
+        ->filter(fn (Product $product) => $product->discount_type !== null)
+        ->values();
 }
 
     // show product

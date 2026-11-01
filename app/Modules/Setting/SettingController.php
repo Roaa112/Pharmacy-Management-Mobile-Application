@@ -2,45 +2,49 @@
 
 namespace App\Modules\Setting;
 
-use App\Models\Setting;
-use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
-use App\Modules\Setting\Services\SettingService;
+use App\Models\AdminAuditLog;
+use App\Models\Setting;
 use App\Modules\Setting\Requests\StoreSettingRequest;
 use App\Modules\Setting\Requests\UpdateSettingRequest;
+use App\Modules\Setting\Services\SettingService;
 
+/**
+ * The settings singleton. There is no create or delete: store() and update() both save into
+ * Setting::current(), so a second row can never appear.
+ */
 class SettingController extends Controller
 {
     public function __construct(private SettingService $settingService)
     {
     }
 
-    public function index(Request $request)
+    public function index()
     {
-        // The app reads a single settings row (Setting::first()).
         return view('dashboard.Settings.index', [
-            'setting' => \App\Models\Setting::orderBy('id')->first(),
+            'setting' => Setting::current(),
         ]);
     }
-    
 
     public function store(StoreSettingRequest $request)
     {
-
-        $this->settingService->createSetting($request->validated());
-        return redirect()->back()->with('success', 'Setting created successfully!');
+        return $this->save($request->validated());
     }
-  
+
     public function update(UpdateSettingRequest $request, $id)
     {
-     
-        $this->settingService->updateSetting($id, $request->validated());
-        return redirect()->back()->with('success', 'Setting updated successfully!');
+        return $this->save($request->validated());
     }
 
-    public function destroy($id)
+    private function save(array $data)
     {
-        $this->settingService->deleteSetting($id);
-        return redirect()->back()->with('success', 'Setting deleted successfully!');
+        $setting = Setting::current();
+        $before = $setting->only(array_keys($data));
+
+        $this->settingService->updateSetting($setting->id, $data);
+
+        AdminAuditLog::record('settings.update', $setting, ['before' => $before, 'after' => $setting->fresh()->only(array_keys($data))]);
+
+        return redirect()->back()->with('success', 'Settings saved.');
     }
 }

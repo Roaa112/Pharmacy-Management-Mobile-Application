@@ -150,10 +150,13 @@ class ApiProductController extends Controller
             $sort = 'DESC';
         }
 
+        // Canceled orders and free gift lines are not sales.
         $topSelling = OrderItem::select(
             'product_id',
             DB::raw('SUM(quantity) as total_sold')
         )
+            ->where('is_gift', false)
+            ->whereHas('order', fn ($q) => $q->where('status', '!=', 'canceled'))
             ->with('product')
             ->groupBy('product_id')
             ->orderBy($sortBy, $sort)

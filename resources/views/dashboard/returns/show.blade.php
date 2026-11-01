@@ -31,8 +31,8 @@
             <div class="card-header"><h3 class="card-title">Photos</h3></div>
             <div class="card-body">
                 @forelse ($refund->images as $image)
-                    <a href="{{ asset('storage/'.$image->path) }}" target="_blank" rel="noopener noreferrer" class="d-inline-block me-2 mb-2">
-                        <img src="{{ asset('storage/'.$image->path) }}" alt="Return photo" class="rounded border" style="width: 9rem; height: 9rem; object-fit: cover" loading="lazy">
+                    <a href="{{ route('dashboard.files.returnImage', $image) }}" target="_blank" rel="noopener noreferrer" class="d-inline-block me-2 mb-2">
+                        <img src="{{ route('dashboard.files.returnImage', $image) }}" alt="Return photo" class="rounded border" style="width: 9rem; height: 9rem; object-fit: cover" loading="lazy">
                     </a>
                 @empty
                     <span class="text-secondary">No photos attached.</span>

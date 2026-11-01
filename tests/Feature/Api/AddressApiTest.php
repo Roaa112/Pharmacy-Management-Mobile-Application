@@ -26,8 +26,8 @@ class AddressApiTest extends TestCase
     private function payload(array $overrides = []): array
     {
         return array_merge([
-            'governorate' => 'Baghdad',
-            'city' => 'Baghdad',
+            'governorate' => 'Cairo',
+            'city' => 'Cairo',
             'street' => 'Main street',
             'building' => '12',
             'type' => 'home',
@@ -99,7 +99,7 @@ class AddressApiTest extends TestCase
     public function test_setting_a_default_does_not_touch_other_users_addresses(): void
     {
         $other = User::factory()->create();
-        $theirs = Address::create(['user_id' => $other->id, 'governorate' => 'Basra', 'city' => 'Basra', 'street' => 'x', 'type' => 'home', 'is_default' => true]);
+        $theirs = Address::create(['user_id' => $other->id, 'governorate' => 'Giza', 'city' => 'Giza', 'street' => 'x', 'type' => 'home', 'is_default' => true]);
 
         $this->create(['is_default' => true]);
 
@@ -121,7 +121,7 @@ class AddressApiTest extends TestCase
     public function test_another_users_address_cannot_be_read_changed_toggled_or_deleted(): void
     {
         $other = User::factory()->create();
-        $theirs = Address::create(['user_id' => $other->id, 'governorate' => 'Basra', 'city' => 'Basra', 'street' => 'Theirs', 'type' => 'home']);
+        $theirs = Address::create(['user_id' => $other->id, 'governorate' => 'Giza', 'city' => 'Giza', 'street' => 'Theirs', 'type' => 'home']);
 
         $this->getJson("/api/user/addresses/{$theirs->id}")->assertNotFound();
         $this->putJson("/api/user/addresses/{$theirs->id}", $this->payload())->assertNotFound();

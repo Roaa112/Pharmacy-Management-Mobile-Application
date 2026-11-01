@@ -83,4 +83,20 @@ public function addresses()
     return $this->hasMany(Address::class);
 }
 
+public function children(): HasMany
+{
+    return $this->hasMany(Child::class);
+}
+
+public function deviceTokens(): HasMany
+{
+    return $this->hasMany(DeviceToken::class);
+}
+
+/** Accounts are active unless an admin deactivated them (the column defaults to true). */
+public function isActive(): bool
+{
+    return $this->is_active === null || (bool) $this->is_active;
+}
+
 }

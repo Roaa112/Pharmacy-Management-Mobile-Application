@@ -19,7 +19,7 @@ class HealthCalculationsTest extends TestCase
     {
         parent::setUp();
 
-        // 15:30 UTC = 18:30 in Baghdad, same calendar date.
+        // 15:30 UTC = 17:30 in Cairo (UTC+2 after summer time ends on Oct 30), same calendar date.
         Carbon::setTestNow('2026-10-31 15:30:00');
         $this->customer = User::factory()->create();
         Sanctum::actingAs($this->customer);
@@ -169,7 +169,7 @@ class HealthCalculationsTest extends TestCase
     {
         $this->ovulation('2026-10-01');
 
-        // 22:30 UTC on Oct 31 is 01:30 on Nov 1 in Baghdad.
+        // 22:30 UTC on Oct 31 is 00:30 on Nov 1 in Cairo (UTC+2).
         Carbon::setTestNow('2026-10-31 22:30:00');
 
         $this->getJson('/api/user/health/ovulation/current')->assertJsonPath('today.date', '2026-11-01');
@@ -232,7 +232,7 @@ class HealthCalculationsTest extends TestCase
 
     public function test_pregnancy_dates_use_the_pharmacy_clock(): void
     {
-        // 22:30 UTC on Oct 31 is already Nov 1 in Baghdad: Nov 1 is today, Nov 2 is the future.
+        // 22:30 UTC on Oct 31 is already Nov 1 in Cairo: Nov 1 is today, Nov 2 is the future.
         Carbon::setTestNow('2026-10-31 22:30:00');
 
         $this->pregnancy('2026-11-01')->assertOk()->assertJsonPath('result.current_week', 1)->assertJsonPath('result.current_day', 0);

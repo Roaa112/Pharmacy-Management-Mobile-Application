@@ -23,6 +23,10 @@ class StoreAddressRequest extends FormRequest
             'landmark'      => ['nullable', 'string', 'max:255'],
             'address'       => ['nullable', 'string', 'max:255'],
             'type'          => ['required', 'in:home,work,pharmacy'],
+            // Optional (newer apps): exact location for delivery pricing. The text fields stay required.
+            // Addresses are in Egypt only: an active Egyptian governorate.
+            'city_id'       => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('cities', 'id')->where('is_active', true)->where('country_id', \App\Models\Country::default()?->id)],
+            'area_id'       => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('areas', 'id')->where('city_id', $this->input('city_id'))],
             'is_default'    => ['nullable', 'boolean'],
         ];
     }

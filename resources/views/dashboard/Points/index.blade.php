@@ -7,7 +7,7 @@
 @section('content')
 <div class="row row-cards mb-3">
     <div class="col-sm-6 col-lg-4">
-        <x-admin.stat label="Valid points" icon="star" tone="yellow" :value="number_format($valid_points_total ?? 0)" :hint="count($orders).' orders'" />
+        <x-admin.stat label="Valid points" icon="star" tone="yellow" :value="number_format($valid_points_total ?? 0)" :hint="(isset($paginator) ? $paginator->total() : count($orders)).' orders'" />
     </div>
 </div>
 
@@ -68,6 +68,7 @@
                 <i class="ti ti-checks me-1"></i>Redeem selected
             </button>
         </div>
+        @isset($paginator) <x-admin.pagination :paginator="$paginator" /> @endisset
     @endif
 </div>
 @endsection

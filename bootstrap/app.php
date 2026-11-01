@@ -48,7 +48,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->throttleApi();
 
         // Drop paging/sorting values that would make listing queries fail.
-        $middleware->api(append: [\App\Http\Middleware\SanitizeListingParameters::class]);
+        $middleware->api(append: [
+            \App\Http\Middleware\SanitizeListingParameters::class,
+            // Deactivated customers' tokens stop working.
+            \App\Http\Middleware\EnsureAccountIsActive::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

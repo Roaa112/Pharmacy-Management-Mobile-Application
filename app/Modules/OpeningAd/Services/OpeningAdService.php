@@ -59,7 +59,16 @@ class OpeningAdService
 
             'image' => $request['image'],
             'is_active' => $request['is_active'] ?? false,
-
+            'title_en' => $request['title_en'] ?? null,
+            'title_ar' => $request['title_ar'] ?? null,
+            'content_en' => $request['content_en'] ?? null,
+            'content_ar' => $request['content_ar'] ?? null,
+            'link' => $request['link'] ?? null,
+            'display_frequency' => $request['display_frequency'] ?? 'every_open',
+            'priority' => $request['priority'] ?? 0,
+            'device' => $request['device'] ?? 'all',
+            'starts_at' => $request['starts_at'] ?? null,
+            'ends_at' => $request['ends_at'] ?? null,
         ];
         return $OpeningAdModel;
     }

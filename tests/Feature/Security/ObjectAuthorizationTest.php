@@ -67,7 +67,7 @@ class ObjectAuthorizationTest extends TestCase
         $this->postJson("/api/user/addresses/{$address->id}/toggle-default")->assertNotFound();
         $this->deleteJson("/api/user/addresses/{$address->id}")->assertStatus(400);
 
-        $this->assertSame('Baghdad', $address->fresh()->city);
+        $this->assertSame('Cairo', $address->fresh()->city);
         $this->assertFalse((bool) $address->fresh()->is_default);
     }
 

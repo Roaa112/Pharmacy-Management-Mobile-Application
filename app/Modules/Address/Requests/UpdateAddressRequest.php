@@ -19,6 +19,8 @@ class UpdateAddressRequest extends FormRequest
             'landmark'      => ['nullable', 'string', 'max:255'],
             'address'       => ['nullable', 'string', 'max:255'],
             'type'          => ['required', 'in:home,work,pharmacy'],
+            'city_id'       => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('cities', 'id')->where('is_active', true)->where('country_id', \App\Models\Country::default()?->id)],
+            'area_id'       => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('areas', 'id')->where('city_id', $this->input('city_id'))],
             'is_default'    => ['nullable', 'boolean'],
         ];
     }

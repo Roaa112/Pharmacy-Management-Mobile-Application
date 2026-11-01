@@ -6,7 +6,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
-use Illuminate\Support\Facades\Storage;
+use App\Modules\Admin\SignedFileController;
 
 
 class ReturnRequestImage extends Model
@@ -17,10 +17,11 @@ class ReturnRequestImage extends Model
     {
         return $this->belongsTo(ReturnRequest::class);
     }
- public function getFullUrlAttribute()
-{
-    return $this->path ? asset(Storage::url($this->path)) : null;
-}
+    /** An expiring signed link: the photo is a private file (see SignedFileController). */
+    public function getFullUrlAttribute()
+    {
+        return $this->path && $this->exists ? SignedFileController::url('return-image', $this->id) : null;
+    }
 
 }
 

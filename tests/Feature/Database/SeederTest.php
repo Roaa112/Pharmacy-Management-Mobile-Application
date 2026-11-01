@@ -21,6 +21,8 @@ class SeederTest extends TestCase
         'personal_access_tokens', 'sessions', 'password_reset_tokens',
         // Admin_Email / Admin_Password are not set in the test environment.
         'admins',
+        // Written only by admins' own actions in the dashboard.
+        'admin_audit_logs',
     ];
 
     private function appTables(): array
@@ -44,22 +46,24 @@ class SeederTest extends TestCase
     {
         $this->seed();
 
-        foreach (ProductSize::all() as $size) {
-            $this->assertSame((int) $size->stock, (int) $size->stockMovements()->where('bucket', 'sellable')->sum('quantity_change'), "size {$size->id}");
-            $this->assertSame((int) $size->quarantined_stock, (int) $size->stockMovements()->where('bucket', 'quarantine')->sum('quantity_change'), "size {$size->id}");
-        }
+        // Balances = ledger, reserved = active reservations, catalogue stock = balances.
+        $this->assertSame([], app(\App\Modules\Inventory\Services\InventoryIntegrity::class)->problems());
 
         foreach (DB::table('coupons')->get() as $coupon) {
             $this->assertSame((int) $coupon->used_count, DB::table('coupon_user')->where('coupon_id', $coupon->id)->count(), $coupon->code);
             $this->assertLessThanOrEqual((int) $coupon->usage_limit, (int) $coupon->used_count, $coupon->code);
         }
 
-        // Every non-canceled order line has exactly one sale movement; canceled lines are put back.
+        // Every order line's stock state follows its order: open lines reserved, dispatched lines
+        // fulfilled, canceled lines released.
         foreach (Order::withoutGlobalScopes()->with('items')->get() as $order) {
+            $expected = match (true) {
+                $order->status === 'canceled' => 'released',
+                \App\Enums\OrderStatus::from($order->status)->isDispatched() => 'fulfilled',
+                default => 'reserved',
+            };
             foreach ($order->items as $item) {
-                $sales = DB::table('stock_movements')->where('type', 'sale')->where('reference_id', $item->id)->count();
-                $cancels = DB::table('stock_movements')->where('type', 'cancellation')->where('reference_id', $item->id)->count();
-                $this->assertSame([1, $order->status === 'canceled' ? 1 : 0], [$sales, $cancels], "order {$order->id}");
+                $this->assertSame($expected, $item->stock_state, "order {$order->id}");
             }
         }
     }

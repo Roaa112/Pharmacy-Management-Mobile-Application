@@ -28,6 +28,12 @@ use App\Modules\HealthIssue\ApiHealthIssueController;
 use App\Modules\HealthService\HealthServiceController;
 use App\Modules\ContactMessage\ApiContactMassageController;
 use App\Modules\ContactMessage\ApiContactMessageController;
+use App\Modules\Delivery\Api\ApiDeliveryController;
+use App\Modules\Delivery\Api\ApiLocationController;
+use App\Modules\Delivery\Api\DeliveryWebhookController;
+use App\Modules\Payments\ApiPaymentMethodController;
+use App\Modules\HealthService\DeviceTokenController;
+use App\Modules\Admin\ApiPrivateFileController;
 
 
 
@@ -36,16 +42,13 @@ Route::middleware('auth:sanctum')->group(function () {
 });
 
 
-Route::middleware(['setLocaleLang'])->get('/test-json', function () {
-    return response()->json([
-        'status' => 'success',
-        'message' => 'This is a valid JSON response',
-        'data' => [
-            'current_locale' => app()->getLocale(),
-            'is_arabic' => (app()->getLocale() === 'ar')
-        ]
-    ]);
-});
+// /test-json was a debug endpoint and has been removed.
+
+// Delivery company webhooks: authenticated by the provider's signature, not by a user token.
+Route::post('webhooks/delivery/{provider:code}', [DeliveryWebhookController::class, 'handle'])->middleware('throttle:120,1');
+// Payment provider notifications: authenticated by the provider's HMAC signature.
+Route::post('webhooks/payments/{provider}', [\App\Modules\Payments\Api\PaymentWebhookController::class, 'handle'])
+    ->whereIn('provider', ['paymob'])->middleware('throttle:240,1')->name('payments.webhook');
  Route::middleware('auth:sanctum')->get('/token/check', function () {
     return response()->json([
         'status' => 'success',
@@ -53,6 +56,9 @@ Route::middleware(['setLocaleLang'])->get('/test-json', function () {
         'user' => auth()->user()
     ]);
 });
+// This file is loaded under /api and again under /api/v1 (bootstrap/app.php), so the catalog
+// group below answers at /api/v1/user/... and /api/v1/v1/user/.... Both are kept: apps in the
+// field may use either (pinned by CatalogApiTest).
 Route::middleware([\App\Http\Middleware\SetLocaleLang::class])
     ->prefix('v1')
     ->group(function () {
@@ -74,6 +80,7 @@ Route::middleware([\App\Http\Middleware\SetLocaleLang::class])
     Route::get('latest-products', [ApiProductController::class, 'latestProducts']);
     Route::get('top-discount-products', [ApiProductController::class, 'topDiscountProducts']);
     Route::get('openingAd', [ApiOpeningAdController::class, 'listAllOpeningAds']);
+    Route::get('promotions', [\App\Modules\Promotions\ApiPromotionController::class, 'index']);
  Route::get('categories/{category}/best-selling-products', [ApiCategoryController::class, 'bestSellingProducts']);
           Route::get('categories/{category_id}/new-arrival-products', [ApiCategoryController::class, 'newArrivalProducts']);
 
@@ -86,12 +93,17 @@ Route::middleware([\App\Http\Middleware\SetLocaleLang::class])
  Route::get('Best-selling-products', [ApiProductController::class, 'productSell']);
 
            Route::get('delivary_prices', [DeliveryPriceController::class, 'indexapi']);
+           // Locations for address forms, and payment methods for checkout.
+           Route::get('locations/cities', [ApiLocationController::class, 'cities']);
+           Route::get('locations/areas', [ApiLocationController::class, 'areas']);
+           Route::get('payment-methods', [ApiPaymentMethodController::class, 'index']);
         });  // <-- هذه مغل بشكل صحيح
 });
 Route::prefix('user')->middleware('throttle:auth')->group(function () {
     Route::post('register', [UserController::class, 'createUser']);
 
     Route::post('verify', [UserController::class, 'verify']);
+    Route::post('verify/resend', [UserController::class, 'resendVerification']);
     Route::post('login', [UserController::class, 'login']);
 
 
@@ -114,6 +126,9 @@ Route::middleware(['auth:sanctum'])->get('user/order-details/{id}', [OrderContro
 Route::middleware(['auth:sanctum'])->get('user/orders/grouped-by-status', [OrderController::class, 'groupedByStatus']);
 
 Route::middleware(['auth:sanctum'])->get('user/points', [OrderController::class, 'points']);
+Route::middleware(['auth:sanctum'])->post('user/orders/{id}/cancel', [OrderController::class, 'cancel'])->whereNumber('id');
+Route::middleware(['auth:sanctum', 'throttle:20,1'])->post('user/orders/{id}/pay', [\App\Modules\Payments\Api\ApiOrderPaymentController::class, 'pay'])->whereNumber('id');
+Route::middleware(['auth:sanctum'])->get('user/orders/{id}/payment', [\App\Modules\Payments\Api\ApiOrderPaymentController::class, 'show'])->whereNumber('id');
 
 
 
@@ -132,7 +147,8 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\SetLocaleLang::class])
     Route::post('/addresses/{id}/toggle-default', [ApiAddressController::class, 'toggleDefault']);
     Route::get('/medication', [MedicationController::class, 'index']);
     Route::post('/medication', [MedicationController::class, 'store']);
-    Route::put('{medication}', [MedicationController::class, 'update']);
+    // Kept for existing apps; constrained to numbers so it cannot swallow other PUT /user/... routes.
+    Route::put('{medication}', [MedicationController::class, 'update'])->whereNumber('medication');
     Route::delete('/medication/{medication}', [MedicationController::class, 'destroy']);
     Route::post('/medications/{medication}/log', [MedicationController::class, 'updateLogStatus']);
     Route::delete('/medications/remove-day', [MedicationController::class, 'deleteDayFromMedication']);
@@ -143,6 +159,19 @@ Route::post('/returns', [ReturnRequestController::class, 'store']);
 Route::get('/returns', [ReturnRequestController::class, 'index']);
 Route::get('/returns/{id}', [ReturnRequestController::class, 'show']);
 Route::post('/returns/{id}/cancel', [ReturnRequestController::class, 'cancel']);
+
+    // Delivery fee preview for an address (same calculation as checkout).
+    Route::post('/delivery/quote', [ApiDeliveryController::class, 'quote']);
+
+    // Push notifications: device registration and the notification history.
+    Route::post('/devices', [DeviceTokenController::class, 'store']);
+    Route::delete('/devices', [DeviceTokenController::class, 'destroy']);
+    Route::get('/notifications', [DeviceTokenController::class, 'notifications']);
+
+    // Private files, only for their owner.
+    Route::get('/files/payment-receipt/{order}', [ApiPrivateFileController::class, 'paymentReceipt'])->whereNumber('order');
+    Route::get('/files/return-image/{image}', [ApiPrivateFileController::class, 'returnImage'])->whereNumber('image');
+    Route::get('/files/medication/{medication}', [ApiPrivateFileController::class, 'medicationImage'])->whereNumber('medication');
 
 
 

@@ -30,9 +30,8 @@ class UsersRepository extends BaseRepository
             'phone' => $user['phone'],
             'password' => Hash::make($user['password']),
             // 'otp_code' => $otp,
-            'otp_expires_at' => Carbon::now()->addMinutes(10),
             'is_verified' => false,
-            'is_active' => true,
+            // is_active defaults to true in the database.
         ]);
 
         // Mail::to($user->email)->send(new SendOtp($user->otp_code));

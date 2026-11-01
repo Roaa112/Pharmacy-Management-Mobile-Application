@@ -54,7 +54,8 @@ protected function redirectTo()
     {
 
         return Auth::guard('admin')->attempt(
-            $this->credentials($request), $request->boolean('remember')
+            // Deactivated admins cannot sign in.
+            $this->credentials($request) + ['is_active' => true], $request->boolean('remember')
         );
     }
 }

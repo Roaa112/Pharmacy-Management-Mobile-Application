@@ -22,6 +22,11 @@ class RouteProtectionTest extends TestCase
         'UserController@sendResetOtp',
         'UserController@verifyOtp',
         'UserController@resetPasswordAuth',
+        'UserController@resendVerification',
+        // Authenticated by the provider's HMAC signature instead of a user token.
+        'DeliveryWebhookController@handle',
+        // Payment provider notifications: authenticated by the provider's HMAC signature, not a token.
+        'PaymentWebhookController@handle',
         'ProductReviewController@index',
         'Closure',
     ];
@@ -73,7 +78,7 @@ class RouteProtectionTest extends TestCase
 
             $action = $this->actionName($route);
             $isCatalogRead = $route->methods() === ['GET', 'HEAD']
-                && preg_match('/^Api(Product|Category|Brand|Banner|Setting|HealthIssue|OpeningAd)Controller@|^DeliveryPriceController@indexapi$/', $action);
+                && preg_match('/^Api(Product|Category|Brand|Banner|Setting|HealthIssue|OpeningAd|Location|PaymentMethod|Promotion)Controller@|^DeliveryPriceController@indexapi$/', $action);
 
             $this->assertTrue(
                 $isCatalogRead || in_array($action, self::PUBLIC_API_ACTIONS, true),

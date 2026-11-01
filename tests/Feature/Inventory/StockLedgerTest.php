@@ -13,7 +13,6 @@ use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
-use InvalidArgumentException;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\BuildsShop;
 use Tests\TestCase;
@@ -42,13 +41,17 @@ class StockLedgerTest extends TestCase
 
         $this->postJson('/api/user/orders', ['address_id' => -1, 'payment_method' => 'cash'])->assertCreated();
 
-        $movement = StockMovement::where('product_size_id', $a->id)->sole();
-        $this->assertSame(StockMovement::TYPE_SALE, $movement->type);
-        $this->assertSame([10, -3, 7], [$movement->quantity_before, $movement->quantity_change, $movement->quantity_after]);
+        // Checkout reserves the units (they stay on hand until dispatch): one "reservation" row per line.
+        $movement = StockMovement::where('product_size_id', $a->id)->where('type', StockMovement::TYPE_RESERVATION)->sole();
+        $this->assertSame('reserved', $movement->bucket);
+        $this->assertSame([0, 3, 3], [$movement->quantity_before, $movement->quantity_change, $movement->quantity_after]);
         $this->assertSame($user->id, $movement->user_id);
-        $this->assertSame((new OrderItem)->getMorphClass(), $movement->reference_type);
-        $this->assertSame(OrderItem::where('product_size_id', $a->id)->value('id'), $movement->reference_id);
-        $this->assertSame(2, StockMovement::where('type', StockMovement::TYPE_SALE)->count());
+        $reservation = \App\Models\StockReservation::where('product_size_id', $a->id)->sole();
+        $this->assertSame((new \App\Models\StockReservation)->getMorphClass(), $movement->reference_type);
+        $this->assertSame($reservation->id, $movement->reference_id);
+        $this->assertSame(OrderItem::where('product_size_id', $a->id)->value('id'), $reservation->order_item_id);
+        $this->assertSame(7, $a->fresh()->stock, 'sellable stock drops at checkout');
+        $this->assertSame(2, StockMovement::where('type', StockMovement::TYPE_RESERVATION)->count());
     }
 
     public function test_cancellation_is_recorded_once_and_the_ledger_matches_stock(): void
@@ -75,28 +78,33 @@ class StockLedgerTest extends TestCase
 
         ProductSize::moveStock($size->id, 1, StockMovement::TYPE_CANCELLATION, ['reference' => $item]);
 
-        try {
-            ProductSize::moveStock($size->id, 1, StockMovement::TYPE_CANCELLATION, ['reference' => $item]);
-            $this->fail('A duplicate cancellation must be rejected.');
-        } catch (QueryException) {
-            // expected: unique (type, reference_type, reference_id)
-        }
+        // The second identical event is a no-op (idempotency key; unique in the database as a backstop).
+        $this->assertNull(ProductSize::moveStock($size->id, 1, StockMovement::TYPE_CANCELLATION, ['reference' => $item]));
 
         $this->assertSame(6, $size->fresh()->stock);
-        $this->assertSame(1, StockMovement::count());
+        $this->assertSame(1, StockMovement::where('type', StockMovement::TYPE_CANCELLATION)->count());
+
+        try {
+            StockMovement::create(StockMovement::where('type', StockMovement::TYPE_CANCELLATION)->sole()->only([
+                'product_id', 'product_size_id', 'warehouse_id', 'type', 'bucket', 'quantity_before', 'quantity_change', 'quantity_after', 'idempotency_key',
+            ]));
+            $this->fail('The database must refuse a second row with the same idempotency key.');
+        } catch (QueryException) {
+        }
     }
 
     public function test_stock_can_never_go_below_zero(): void
     {
         $size = $this->makeSize(stock: 2);
 
-        $this->expectException(InvalidArgumentException::class);
+        $this->expectException(\App\Modules\Inventory\Services\InsufficientStock::class);
 
         try {
-            ProductSize::moveStock($size->id, -3, StockMovement::TYPE_SALE);
+            ProductSize::moveStock($size->id, -3, StockMovement::TYPE_ADJUSTMENT);
         } finally {
             $this->assertSame(2, $size->fresh()->stock);
-            $this->assertSame(0, StockMovement::count());
+            // Only the opening stock row: the refused change wrote nothing.
+            $this->assertSame([StockMovement::TYPE_INITIAL], StockMovement::pluck('type')->all());
         }
     }
 
@@ -191,6 +199,8 @@ class StockLedgerTest extends TestCase
 
         $this->assertSame(0, $size->fresh()->stock);
         $this->assertSame(1, StockMovement::where(['product_size_id' => $size->id, 'type' => StockMovement::TYPE_ADJUSTMENT])->count());
-        $this->assertSame(1, StockMovement::where('type', StockMovement::TYPE_INITIAL)->count());
+        // The removed size's opening stock and the new size's opening stock.
+        $this->assertSame(2, StockMovement::where('type', StockMovement::TYPE_INITIAL)->count());
+        $this->assertSame(3, ProductSize::where('size', 'XL')->sole()->stock);
     }
 }

@@ -41,7 +41,7 @@ class ProductController extends Controller
     {
         $search = trim((string) $request->query('search'));
         $categoryId = $request->integer('category') ?: null;
-        $threshold = (int) config('pharmacy.low_stock_threshold');
+        $threshold = \App\Models\Setting::current()->lowStockThreshold();
 
         $products = Product::query()
             ->withoutGlobalScope('listing_aggregates')

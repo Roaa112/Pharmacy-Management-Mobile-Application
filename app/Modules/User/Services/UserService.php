@@ -58,6 +58,15 @@ class UserService
         if (!$user) {
             return response()->json(['message' => 'Unauthorized'], 401);
         }
+
+        if (!$user->isActive()) {
+            return response()->json(['message' => 'This account has been deactivated.', 'code' => 'account_inactive'], 403);
+        }
+
+        // Off by default (config pharmacy.require_verified_login) so existing users are not locked out.
+        if (config('pharmacy.require_verified_login') && !$user->is_verified) {
+            return response()->json(['message' => 'Please verify your email first.', 'code' => 'email_not_verified'], 403);
+        }
         $token = $user->createToken($user->email)->plainTextToken;
 
 

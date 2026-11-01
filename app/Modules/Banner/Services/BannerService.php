@@ -57,9 +57,15 @@ class BannerService
            
             'title_en' => $request['title_en'],
             'image' => $request['image'],
-            'link' => $request['link'],
-            'status' => $request['status'],
-            'order_of_appearance' => $request['order_of_appearance'],
+            'link' => $request['link'] ?? null,
+            'status' => (bool) ($request['status'] ?? false),
+            'order_of_appearance' => $request['order_of_appearance'] ?? 0,
+            'description_ar' => $request['description_ar'] ?? null,
+            'description_en' => $request['description_en'] ?? null,
+            'position' => $request['position'] ?? 'home',
+            'device' => $request['device'] ?? 'all',
+            'starts_at' => $request['starts_at'] ?? null,
+            'ends_at' => $request['ends_at'] ?? null,
         ];
     
         return $bannerModel;

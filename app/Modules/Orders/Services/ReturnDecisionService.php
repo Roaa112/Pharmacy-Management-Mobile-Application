@@ -4,11 +4,13 @@ namespace App\Modules\Orders\Services;
 
 use App\Models\LoyaltyPointReversal;
 use App\Models\Order;
-use App\Models\ProductSize;
+use App\Models\OrderItem;
 use App\Models\ReturnRequest;
 use App\Models\ReturnRequestItem;
-use App\Models\Setting;
-use App\Models\StockMovement;
+use App\Modules\Inventory\Services\InventoryService;
+use App\Modules\Payments\Services\RefundService;
+use App\Modules\Points\Services\LoyaltyService;
+use App\Modules\Promotions\Services\PromotionRefundPolicy;
 use App\Support\Money;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +21,8 @@ use Illuminate\Support\Facades\DB;
  * Accepting a return is three things, done in one transaction or not at all:
  *  1. the refund the admin approves (never more than is left of what the order cost);
  *  2. returned units go to quarantine, never back on sale (decision D1);
- *  3. loyalty points are reversed in proportion to the money refunded (decision D2).
+ *  3. loyalty points are reversed in proportion to the money refunded (decision D2);
+ *  4. a pending refund is created for the approved amount (paid back by RefundService).
  *
  * Problems the admin can fix are reported as DomainException with a readable message.
  */
@@ -39,7 +42,7 @@ class ReturnDecisionService
                 throw new DomainException('This return request was already processed.');
             }
 
-            $order = Order::withoutGlobalScopes()->with('items')->lockForUpdate()->findOrFail($return->order_id);
+            $order = Order::with('items')->lockForUpdate()->findOrFail($return->order_id);
 
             $amount = ($amount === null || $amount === '') ? $return->refund_amount : $amount;
 
@@ -56,6 +59,19 @@ class ReturnDecisionService
 
             $received = $this->validatedQuantities($order, $quantities);
 
+            // Orders priced with promotions: never refund more than was paid for the returned units,
+            // less the gifts and discounts the return makes no longer earned (PromotionRefundPolicy).
+            $policy = app(PromotionRefundPolicy::class);
+            if ($received && $policy->applies($order)) {
+                $quote = $policy->quote($order, $received);
+                if ($amountMinor > $quote['max']) {
+                    throw new DomainException('At most '.number_format(Money::fromMinor($quote['max']), 2).' can be refunded for these units: '
+                        .number_format(Money::fromMinor($quote['returned_value']), 2).' paid for them'
+                        .($quote['deduction'] ? ', minus '.number_format(Money::fromMinor($quote['deduction']), 2).' of gifts or discounts no longer earned' : '')
+                        .($quote['delivery'] ? ', plus '.number_format(Money::fromMinor($quote['delivery']), 2).' delivery' : '').'.');
+                }
+            }
+
             $return->forceFill([
                 'status' => 'accepted',
                 'approved_amount' => Money::fromMinor($amountMinor),
@@ -71,14 +87,26 @@ class ReturnDecisionService
                 ]);
 
                 // Quarantine, not sellable stock: returned medicine is never resold automatically.
-                ProductSize::moveQuarantine($order->items->find($orderItemId)->product_size_id, $quantity, StockMovement::TYPE_RETURN_QUARANTINE, [
-                    'reference' => $returnItem,
+                app(InventoryService::class)->receiveCustomerReturn($returnItem, $order->items->find($orderItemId), $quantity, [
                     'admin_id' => $adminId,
                     'reason' => "Return #{$return->id} of order #{$order->id}",
                 ]);
+
+                // A promotional gift that came back is recorded as returned (it was quarantined like any unit).
+                $line = $order->items->find($orderItemId);
+                if ($line->is_gift) {
+                    $line->forceFill(['gift_status' => OrderItem::GIFT_RETURNED])->save();
+                }
             }
 
-            $this->reversePoints($order, $return, $alreadyRefundedMinor + $amountMinor, $adminId);
+            $reversal = $this->reversePoints($order, $return, $alreadyRefundedMinor + $amountMinor, $adminId);
+            if ($reversal) {
+                app(LoyaltyService::class)->recordReversal($reversal);
+            }
+
+            // The approved amount becomes a refund to pay back (Refunds screen). The payment and the
+            // order show "refunded" only once the refund has actually succeeded.
+            app(RefundService::class)->requestForReturn($return, $amountMinor, $adminId);
 
             return $return;
         });
@@ -206,9 +234,7 @@ class ReturnDecisionService
             return 'redeemed';
         }
 
-        $validityDays = Setting::first()?->points_validity_days ?? 0;
-
-        return $order->created_at->lt(now()->subDays($validityDays)) ? 'expired' : 'earned';
+        return $order->created_at->lt(app(LoyaltyService::class)->validFrom()) ? 'expired' : 'earned';
     }
 
     private function divideRoundHalfUp(int $numerator, int $denominator): int

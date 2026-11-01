@@ -13,5 +13,6 @@ abstract class TestCase extends BaseTestCase
 
         // Discount rules are cached per store-clock second; each test starts with a fresh database.
         Product::flushActiveDiscountCache();
+        \App\Models\Country::flushDefault();
     }
 }

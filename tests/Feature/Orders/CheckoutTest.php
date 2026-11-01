@@ -76,8 +76,8 @@ class CheckoutTest extends TestCase
 
     public function test_delivery_fee_is_added_for_own_address(): void
     {
-        $this->makeDeliveryPrice('Baghdad', 5);
-        $address = $this->makeAddress($this->user, 'Baghdad');
+        $this->makeDeliveryPrice('Cairo', 5);
+        $address = $this->makeAddress($this->user, 'Cairo');
         $this->putInCart($this->user, $this->makeSize(price: 20), 1);
 
         $this->checkout(['address_id' => $address->id])->assertCreated();
@@ -87,24 +87,26 @@ class CheckoutTest extends TestCase
 
     public function test_city_wildcards_cannot_match_an_arbitrary_delivery_price(): void
     {
-        $this->makeDeliveryPrice('Baghdad', 5);
+        $this->makeDeliveryPrice('Cairo', 5);
         $address = $this->makeAddress($this->user, '%');
         $this->putInCart($this->user, $this->makeSize(), 1);
 
         $this->checkout(['address_id' => $address->id])->assertStatus(422);
     }
 
-    public function test_qicard_payment_is_stored(): void
+    /** ZainCash and Qi Card were retired: checkout refuses them, even with a receipt. */
+    public function test_retired_transfer_methods_are_refused(): void
     {
-        Storage::fake('public');
+        Storage::fake('local');
         $this->putInCart($this->user, $this->makeSize(), 1);
 
-        $this->checkout([
-            'payment_method' => 'qicard',
-            'payment_image' => UploadedFile::fake()->image('receipt.jpg'),
-        ])->assertCreated();
+        foreach (['zaincash', 'qicard'] as $method) {
+            $this->checkout(['payment_method' => $method, 'payment_image' => UploadedFile::fake()->image('receipt.jpg')])
+                ->assertStatus(422)->assertJsonValidationErrors('payment_method');
+        }
 
-        $this->assertDatabaseHas('orders', ['payment_method' => 'qicard']);
+        $this->assertDatabaseCount('orders', 0);
+        $this->checkout()->assertCreated();
     }
 
     public function test_payment_image_must_be_an_image(): void
@@ -113,9 +115,9 @@ class CheckoutTest extends TestCase
         $this->putInCart($this->user, $this->makeSize(), 1);
 
         $this->checkout([
-            'payment_method' => 'zaincash',
+            'payment_method' => 'cash',
             'payment_image' => UploadedFile::fake()->create('shell.php', 10, 'application/x-php'),
-        ])->assertStatus(422);
+        ])->assertStatus(422)->assertJsonValidationErrors('payment_image');
     }
 
     public function test_cannot_add_another_products_size_to_the_cart(): void

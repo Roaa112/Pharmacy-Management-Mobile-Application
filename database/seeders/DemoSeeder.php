@@ -6,6 +6,9 @@ use App\Models\User;
 use Database\Seeders\Demo\CatalogSeeder;
 use Database\Seeders\Demo\CustomerSeeder;
 use Database\Seeders\Demo\HealthDataSeeder;
+use Database\Seeders\Demo\InventorySeeder;
+use Database\Seeders\Demo\MarketingSeeder;
+use Database\Seeders\Demo\PaymentsSeeder;
 use Database\Seeders\Demo\MedicationSeeder;
 use Database\Seeders\Demo\OrderSeeder;
 use Database\Seeders\Demo\PromotionSeeder;
@@ -43,7 +46,10 @@ class DemoSeeder extends Seeder
             PromotionSeeder::class,
             CustomerSeeder::class,
             OrderSeeder::class,
+            MarketingSeeder::class,
             ReturnSeeder::class,
+            InventorySeeder::class,
+            PaymentsSeeder::class,
             HealthDataSeeder::class,
             MedicationSeeder::class,
         ]);

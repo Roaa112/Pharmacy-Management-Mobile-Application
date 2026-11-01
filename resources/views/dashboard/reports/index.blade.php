@@ -158,6 +158,42 @@
             @endif
         </div>
     </div>
+
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header"><h3 class="card-title">Payment methods</h3></div>
+            <div class="table-responsive">
+                <table class="table table-vcenter card-table">
+                    <thead><tr><th>Method</th><th class="text-end">Orders</th><th class="text-end">Value</th><th class="text-end">To verify</th></tr></thead>
+                    <tbody>
+                    @forelse ($payments as $row)
+                        <tr><td>{{ $row->payment_method }}</td><td class="text-end">{{ $row->orders }}</td><td class="text-end">{{ $money($row->value) }}</td><td class="text-end">{{ $row->to_verify }}</td></tr>
+                    @empty
+                        <tr><td colspan="4" class="text-secondary">No orders in this period.</td></tr>
+                    @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card h-100">
+            <div class="card-header"><div><h3 class="card-title">Deliveries</h3><div class="card-subtitle">Cash collected by couriers, not yet settled: {{ $money($codOutstanding) }}</div></div></div>
+            <div class="table-responsive">
+                <table class="table table-vcenter card-table">
+                    <thead><tr><th>Status</th><th class="text-end">Shipments</th><th class="text-end">Fees charged</th><th class="text-end">COD</th></tr></thead>
+                    <tbody>
+                    @forelse ($delivery as $row)
+                        <tr><td><x-admin.status :status="$row->status" /></td><td class="text-end">{{ $row->total }}</td><td class="text-end">{{ $money($row->fees) }}</td><td class="text-end">{{ $money($row->cod) }}</td></tr>
+                    @empty
+                        <tr><td colspan="4" class="text-secondary">No shipments in this period.</td></tr>
+                    @endforelse
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </div>
 @endsection
 

@@ -2,11 +2,11 @@
 
 namespace App\Models;
 
+use App\Modules\Promotions\Engine\PromotionCatalog;
+use App\Modules\Promotions\Engine\PromotionEngine;
 use App\Support\Money;
 use App\Traits\Translatable;
-use App\Support\StoreClock;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -25,9 +25,6 @@ class Product extends Model
 
     private bool $activeDiscountResolved = false;
     private ?array $activeDiscount = null;
-
-    /** Active discount rule targets, cached per store-clock second (see activeDiscountTargets). */
-    private static array $activeDiscountCache = [];
 
     protected $fillable = [
         'name_ar',
@@ -63,172 +60,98 @@ class Product extends Model
 
 
 
-    public function getActiveDiscount()
+    /**
+     * The item promotion that sets this product's catalogue price (first size), from the
+     * promotion engine: ['type' => 'flash'|'percent'|'fixed', 'value' => ...] or null.
+     * Kept for the appended discount_type attribute and older callers.
+     */
+    public function getActiveFinalDiscount()
     {
-        $targets = [
-            'product' => $this->id,
-            'brand' => $this->brand_id,
-            'category' => $this->category_id,
-        ];
+        // Resolved once per model instance: several appended attributes need it.
+        if ($this->activeDiscountResolved) {
+            return $this->activeDiscount;
+        }
 
-        return static::activeDiscountTargets()->first(
-            fn ($row) => isset($targets[$row->target_type]) && $targets[$row->target_type] == $row->target_id
-        );
+        $this->activeDiscountResolved = true;
+        $size = $this->sizes->first();
+
+        if (!$size) {
+            return $this->activeDiscount = null;
+        }
+
+        [, $winner] = app(PromotionEngine::class)->catalogPrice($this, $size, Auth::user());
+
+        return $this->activeDiscount = $winner ? ['type' => $winner['type'], 'value' => $winner['value']] : null;
+    }
+
+    /** Forget the cached promotion state, e.g. after a promotion is saved within the same second. */
+    public static function flushActiveDiscountCache(): void
+    {
+        PromotionCatalog::flush();
     }
 
     /**
-     * Active price discount rules with their targets, loaded once per request
-     * instead of one query per product.
+     * Display price: the first size after the active promotion, the same calculation the cart
+     * and checkout use (priceForSize).
      */
-    protected static function activeDiscountTargets()
+    public function getFinalPriceAttribute()
     {
-        // Cached per store-clock second (not for the whole process), so a rule that starts
-        // or ends is picked up immediately and every price in one request uses the same rules.
-        $now = StoreClock::now()->toDateTimeString();
-        $cache = &static::$activeDiscountCache;
+        $firstSize = $this->sizes->first();
+        if (!$firstSize) return 0;
 
-        if (($cache['at'] ?? null) !== $now) {
-            $cache = ['at' => $now, 'rows' => DB::table('discount_rules')
-                ->join('discount_rule_targets', 'discount_rules.id', '=', 'discount_rule_targets.discount_rule_id')
-                ->whereNotIn('discount_rules.discount_type', ['buy_x_get_y', 'amount_gift'])
-                ->where('discount_rules.starts_at', '<=', $now)
-                ->where('discount_rules.ends_at', '>=', $now)
-                // Several matching rules: the first one wins, consistently (oldest rule first).
-                ->orderBy('discount_rules.id')
-                ->select('discount_rules.discount_type', 'discount_rules.discount_value', 'discount_rule_targets.target_type', 'discount_rule_targets.target_id')
-                ->get()];
-        }
-
-        return $cache['rows'];
+        return $this->priceForSize($firstSize);
     }
 
-    /** Forget the cached rules, e.g. after a rule is saved within the same second. */
-    public static function flushActiveDiscountCache(): void
+    public function getAvailableSizesAttribute()
     {
-        static::$activeDiscountCache = [];
+        return $this->sizes
+            ->filter(fn($size) => $size->stock > 0)
+            ->map(function ($size) {
+                return [
+                    'id' => $size->id,
+                    'size' => $size->size,
+                    'original_price' => $size->price,
+                    'price' => $this->priceForSize($size),
+                    'stock' => $size->stock,
+                ];
+            })->values();
     }
 
-/**
- * The one promotion that sets this product's price. No stacking: a live flash sale wins;
- * otherwise the first active discount rule for the product, its brand or its category.
- * Coupons are applied later, to the order total, at checkout.
- */
-public function getActiveFinalDiscount()
-{
-    // Resolved once per model instance: several appended attributes need it.
-    if ($this->activeDiscountResolved) {
-        return $this->activeDiscount;
+    /**
+     * Every size, sold out or not, so the app can show sold-out sizes as disabled (D6).
+     */
+    public function getSizeOptionsAttribute()
+    {
+        return $this->sizes->map(fn ($size) => [
+            'id' => $size->id,
+            'size' => $size->size,
+            'original_price' => $size->price,
+            'price' => $this->priceForSize($size),
+            'stock' => max(0, (int) $size->stock),
+            'in_stock' => $size->stock > 0,
+        ])->values();
     }
 
-    $this->activeDiscountResolved = true;
-
-    // Flash sale: only inside its time window (decision D7).
-    if (
-        $this->saleable_type === FlashSale::class &&
-        $this->saleable instanceof FlashSale &&
-        $this->saleable->isLive()
-    ) {
-        return $this->activeDiscount = [
-            'type' => 'flash',
-            'value' => $this->saleable->discount_value,
-        ];
+    public function getInStockAttribute(): bool
+    {
+        return $this->sizes->contains(fn ($size) => $size->stock > 0);
     }
 
-    // Discount rule logic
-    $discount = $this->getActiveDiscount();
-    if ($discount) {
-        return $this->activeDiscount = [
-            'type' => $discount->discount_type,
-            'value' => $discount->discount_value,
-        ];
+    public function getStockStatusAttribute(): string
+    {
+        return $this->in_stock ? 'in_stock' : 'out_of_stock';
     }
 
-    return $this->activeDiscount = null;
-}
+    /**
+     * Catalogue selling price of one size (flash sale / discount rules, no cart conditions),
+     * from the promotion engine. The cart and checkout price whole carts through the same engine.
+     */
+    public function priceForSize(ProductSize $size)
+    {
+        [$unit] = app(PromotionEngine::class)->catalogPrice($this, $size, Auth::user());
 
-/**
- * Display price: the first size after the active promotion, the same calculation the cart
- * and checkout use (priceForSize).
- */
-public function getFinalPriceAttribute()
-{
-    $firstSize = $this->sizes->first();
-    if (!$firstSize) return 0;
-
-    return $this->priceForSize($firstSize);
-}
-public function getAvailableSizesAttribute()
-{
-    $discount = $this->getActiveFinalDiscount();
-
-    return $this->sizes
-        ->filter(fn($size) => $size->stock > 0)
-        ->map(function ($size) use ($discount) {
-            return [
-                'id' => $size->id,
-                'size' => $size->size,
-                'original_price' => $size->price,
-                'price' => $this->applyDiscount($size->price, $discount),
-                'stock' => $size->stock,
-            ];
-        })->values();
-}
-
-/**
- * Every size, sold out or not, so the app can show sold-out sizes as disabled (D6).
- */
-public function getSizeOptionsAttribute()
-{
-    return $this->sizes->map(fn ($size) => [
-        'id' => $size->id,
-        'size' => $size->size,
-        'original_price' => $size->price,
-        'price' => $this->priceForSize($size),
-        'stock' => max(0, (int) $size->stock),
-        'in_stock' => $size->stock > 0,
-    ])->values();
-}
-
-public function getInStockAttribute(): bool
-{
-    return $this->sizes->contains(fn ($size) => $size->stock > 0);
-}
-
-public function getStockStatusAttribute(): string
-{
-    return $this->in_stock ? 'in_stock' : 'out_of_stock';
-}
-
-/**
- * Authoritative selling price of one of this product's sizes (after flash sale / discount rules).
- * Used by the cart and checkout so the client never decides the price.
- */
-public function priceForSize(ProductSize $size)
-{
-    return $this->applyDiscount($size->price, $this->getActiveFinalDiscount());
-}
-
-private function applyDiscount($originalPrice, ?array $discount)
-{
-    if (!$discount) {
-        return $originalPrice;
+        return Money::fromMinor($unit);
     }
-
-    $price = Money::toMinor($originalPrice);
-
-    if (in_array($discount['type'], ['fixed'])) {
-        // خصم ثابت (قيمة ثابتة)
-        return Money::fromMinor(max(0, $price - Money::toMinor($discount['value'])));
-    }
-
-    if (in_array($discount['type'], ['percent', 'flash'])) {
-        // خصم نسبي (نسبة مئوية)
-        return Money::fromMinor(Money::applyPercent($price, $discount['value']));
-    }
-
-    return $originalPrice;
-}
-
 
     public function getDiscountTypeAttribute()
     {
@@ -347,6 +270,25 @@ private function applyDiscount($originalPrice, ?array $discount)
 
             if ($userId = Auth::id()) {
                 $builder->withExists(['favorites as favorited_by_current_user' => fn ($q) => $q->where('user_id', $userId)]);
+            }
+        });
+
+        // The product form links a product to one flash sale (saleable). The engine prices flash
+        // sales from flash_sale_items, so the link is mirrored there as a whole-product item.
+        static::saved(function (Product $product) {
+            if (!$product->wasChanged(['saleable_type', 'saleable_id']) && !$product->wasRecentlyCreated) {
+                return;
+            }
+
+            FlashSaleItem::where('product_id', $product->id)->where('is_product_link', true)
+                ->when($product->saleable_type === FlashSale::class, fn ($q) => $q->where('flash_sale_id', '!=', $product->saleable_id))
+                ->delete();
+
+            if ($product->saleable_type === FlashSale::class && $product->saleable_id && FlashSale::whereKey($product->saleable_id)->exists()) {
+                FlashSaleItem::firstOrCreate(
+                    ['flash_sale_id' => $product->saleable_id, 'product_id' => $product->id, 'product_size_id' => null],
+                    ['is_product_link' => true],
+                );
             }
         });
     }

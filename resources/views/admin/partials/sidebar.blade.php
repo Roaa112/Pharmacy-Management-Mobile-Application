@@ -1,39 +1,70 @@
 @php
-    // [label, route name, icon, route patterns that mark the item active, badge]
+    // [label, route name, icon, route patterns that mark the item active, badge, permission]
+    // Items the admin's role does not allow are not shown (the routes refuse them anyway).
     $sections = [
         'Overview' => [
-            ['Dashboard', 'dashboard.home', 'layout-dashboard', ['dashboard.home']],
-            ['Reports', 'dashboard.reports.index', 'chart-bar', ['dashboard.reports.*']],
+            ['Dashboard', 'dashboard.home', 'layout-dashboard', ['dashboard.home'], 0, null],
+            ['Reports', 'dashboard.reports.index', 'chart-bar', ['dashboard.reports.*'], 0, 'reports'],
         ],
         'Sales' => [
-            ['Orders', 'dashboard.orders.index', 'shopping-cart', ['dashboard.orders.*'], $adminAttention['pending_orders'] ?? 0],
-            ['Returns', 'dashboard.returns.index', 'receipt-refund', ['dashboard.returns.*'], $adminAttention['pending_returns'] ?? 0],
-            ['Customers', 'dashboard.customers.index', 'users', ['dashboard.customers.*']],
-            ['Loyalty points', 'dashboard.points.index', 'star', ['dashboard.points.*']],
+            ['Orders', 'dashboard.orders.index', 'shopping-cart', ['dashboard.orders.*'], $adminAttention['pending_orders'] ?? 0, 'orders'],
+            ['Returns', 'dashboard.returns.index', 'receipt-refund', ['dashboard.returns.*'], $adminAttention['pending_returns'] ?? 0, 'refunds'],
+            ['Customers', 'dashboard.customers.index', 'users', ['dashboard.customers.*'], 0, 'users'],
+            ['Loyalty points', 'dashboard.points.index', 'star', ['dashboard.points.*'], 0, 'loyalty'],
+        ],
+        'Payments' => [
+            ['Payments', 'dashboard.payments.index', 'credit-card', ['dashboard.payments.*'], $adminAttention['payments_to_verify'] ?? 0, 'payments'],
+            ['Refunds', 'dashboard.refunds.index', 'receipt-refund', ['dashboard.refunds.*'], $adminAttention['pending_refunds'] ?? 0, 'refunds'],
+            ['Cash on delivery', 'dashboard.cod.index', 'cash', ['dashboard.cod.*'], 0, 'payments'],
+            ['Payment methods', 'dashboard.payment_methods.index', 'wallet', ['dashboard.payment_methods.*'], 0, 'payments'],
+        ],
+        'Delivery' => [
+            ['Shipments', 'dashboard.delivery.shipments.index', 'truck', ['dashboard.delivery.shipments.*'], $adminAttention['shipments_attention'] ?? 0, 'delivery'],
+            ['Delivery zones', 'dashboard.delivery.zones.index', 'truck-delivery', ['dashboard.delivery.zones.*', 'dashboard.delivery_prices.*'], 0, 'delivery'],
+            ['Providers', 'dashboard.delivery.providers.index', 'building-warehouse', ['dashboard.delivery.providers.*'], 0, 'delivery'],
+            ['Cities & areas', 'dashboard.cities.index', 'map-2', ['dashboard.cities.*'], 0, 'delivery'],
         ],
         'Catalog' => [
-            ['Products', 'dashboard.products.index', 'pill', ['dashboard.products.*']],
-            ['Categories', 'dashboard.categories.index', 'category', ['dashboard.categories.*']],
-            ['Brands', 'dashboard.brands.index', 'badge-tm', ['dashboard.brands.*']],
-            ['Health issues', 'dashboard.health_issues.index', 'stethoscope', ['dashboard.health_issues.*']],
+            ['Products', 'dashboard.products.index', 'pill', ['dashboard.products.*'], 0, 'catalog'],
+            ['Categories', 'dashboard.categories.index', 'category', ['dashboard.categories.*'], 0, 'catalog'],
+            ['Brands', 'dashboard.brands.index', 'badge-tm', ['dashboard.brands.*'], 0, 'catalog'],
+            ['Health issues', 'dashboard.health_issues.index', 'stethoscope', ['dashboard.health_issues.*'], 0, 'catalog'],
         ],
         'Inventory' => [
-            ['Stock overview', 'dashboard.inventory.index', 'packages', ['dashboard.inventory.index'], $adminAttention['out_of_stock'] ?? 0],
-            ['Stock movements', 'dashboard.inventory.movements', 'arrows-exchange', ['dashboard.inventory.movements']],
+            ['Stock overview', 'dashboard.inventory.index', 'packages', ['dashboard.inventory.index', 'dashboard.inventory.show'], $adminAttention['out_of_stock'] ?? 0, 'inventory'],
+            ['Stock movements', 'dashboard.inventory.movements', 'arrows-exchange', ['dashboard.inventory.movements'], 0, 'inventory'],
+            ['Transfers', 'dashboard.transfers.index', 'arrows-right-left', ['dashboard.transfers.*'], 0, 'inventory'],
+            ['Stock counts', 'dashboard.counts.index', 'clipboard-list', ['dashboard.counts.*'], 0, 'inventory'],
+            ['Warehouses', 'dashboard.warehouses.index', 'building-warehouse', ['dashboard.warehouses.*'], 0, 'inventory'],
+            ['Inventory reports', 'dashboard.inventory.reports', 'report-analytics', ['dashboard.inventory.reports'], 0, 'inventory'],
+        ],
+        'Purchasing' => [
+            ['Purchase orders', 'dashboard.purchase_orders.index', 'file-invoice', ['dashboard.purchase_orders.*'], 0, 'purchasing'],
+            ['Suppliers', 'dashboard.suppliers.index', 'truck-loading', ['dashboard.suppliers.*'], 0, 'purchasing'],
         ],
         'Marketing' => [
-            ['Coupons', 'dashboard.coupons.index', 'ticket', ['dashboard.coupons.*']],
-            ['Discounts', 'dashboard.discounts.index', 'discount', ['dashboard.discounts.*']],
-            ['Flash sales', 'dashboard.flash_sales.index', 'bolt', ['dashboard.flash_sales.*']],
-            ['Banners', 'dashboard.banners.index', 'photo', ['dashboard.banners.*']],
-            ['Opening ads', 'dashboard.OpeningAd.index', 'device-mobile', ['dashboard.OpeningAd.*']],
+            ['Marketing overview', 'dashboard.marketing.index', 'chart-pie', ['dashboard.marketing.*'], 0, 'marketing'],
+            ['Promotions', 'dashboard.discounts.index', 'discount', ['dashboard.discounts.*'], 0, 'marketing'],
+            ['Campaigns', 'dashboard.campaigns.index', 'speakerphone', ['dashboard.campaigns.*'], 0, 'marketing'],
+            ['Coupons', 'dashboard.coupons.index', 'ticket', ['dashboard.coupons.*'], 0, 'marketing'],
+            ['Flash sales', 'dashboard.flash_sales.index', 'bolt', ['dashboard.flash_sales.*'], 0, 'marketing'],
+            ['Banners', 'dashboard.banners.index', 'photo', ['dashboard.banners.*'], 0, 'marketing'],
+            ['Opening ads', 'dashboard.OpeningAd.index', 'device-mobile', ['dashboard.OpeningAd.*'], 0, 'marketing'],
+        ],
+        'Health content' => [
+            ['Vaccination schedule', 'dashboard.health_content.vaccines.index', 'vaccine', ['dashboard.health_content.vaccines.*'], 0, 'health_content'],
+            ['Pregnancy weeks', 'dashboard.health_content.pregnancy.index', 'baby-carriage', ['dashboard.health_content.pregnancy.*'], 0, 'health_content'],
         ],
         'Operations' => [
-            ['Delivery prices', 'dashboard.delivery_prices.index', 'truck-delivery', ['dashboard.delivery_prices.*']],
-            ['Contact messages', 'dashboard.contacts.index', 'mail', ['dashboard.contacts.*']],
-            ['Settings', 'dashboard.settings.index', 'settings', ['dashboard.settings.*']],
+            ['Contact messages', 'dashboard.contacts.index', 'mail', ['dashboard.contacts.*'], 0, 'users'],
+            ['Settings', 'dashboard.settings.index', 'settings', ['dashboard.settings.*'], 0, 'settings'],
+            ['Admins & roles', 'dashboard.admins.index', 'shield-lock', ['dashboard.admins.*', 'dashboard.audit.*'], 0, 'admins'],
         ],
     ];
+    $sections = array_filter(array_map(
+        fn ($items) => array_values(array_filter($items, fn ($item) => $item[5] === null || \Illuminate\Support\Facades\Gate::allows($item[5]))),
+        $sections,
+    ));
 
     $healthLinks = [
         ['Body weight', 'admin.health.body_weight'],
@@ -42,8 +73,10 @@
         ['Ovulation', 'admin.health.ovulation'],
         ['Pregnancy', 'admin.health.pregnancy'],
         ['Children & vaccines', 'admin.health.children'],
+        ['Reminders sent', 'admin.health.notifications'],
     ];
     $healthActive = request()->routeIs('admin.health.*');
+    $canSeeHealth = \Illuminate\Support\Facades\Gate::allows('health_data');
 @endphp
 
 <aside class="navbar navbar-vertical navbar-expand-lg admin-sidebar" data-bs-theme="dark">
@@ -76,8 +109,8 @@
                         </li>
                     @endforeach
 
-                    @if ($section === 'Sales')
-                        {{-- Health data is personal and sensitive: grouped so it is easy to restrict later. --}}
+                    @if ($section === 'Sales' && $canSeeHealth)
+                        {{-- Health data is personal and sensitive: only for the health_data permission. --}}
                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle {{ $healthActive ? 'active show' : '' }}" href="#sidebar-health"
                                data-bs-toggle="dropdown" data-bs-auto-close="false" role="button"

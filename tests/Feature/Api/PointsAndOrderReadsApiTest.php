@@ -73,17 +73,25 @@ class PointsAndOrderReadsApiTest extends TestCase
 
     public function test_orders_with_an_accepted_return_are_hidden_from_the_app(): void
     {
-        // Current product behaviour (Order global scope "hide_refunded_orders_for_api"), also for
-        // partial returns. Pinned here so a change is deliberate; see the audit notes.
+        // Orders with an accepted (even partial) return stay hidden from the order list and
+        // details (decision D3, now an explicit Order::visibleToCustomer() scope).
+        //
+        // Points changed deliberately: the customer sees the same points as the dashboard
+        // (LoyaltyService), i.e. what is left after the refund reversal. They used to be hidden,
+        // while the admin could still redeem them.
         $kept = $this->orderWithPoints(10);
         $returned = $this->orderWithPoints(6);
         $this->reverse($returned, 3);
 
         $this->getJson('/api/user/points/valid')
             ->assertOk()
-            ->assertJsonPath('valid_points_total', 10)
-            ->assertJsonPath('orders.0.order_id', $kept->id)
-            ->assertJsonCount(1, 'orders');
+            ->assertJsonPath('valid_points_total', 13)
+            ->assertJsonCount(2, 'orders');
+        $this->assertSame(3, collect($this->getJson('/api/user/points/valid')->json('orders'))->firstWhere('order_id', $returned->id)['points_earned']);
+
+        // A fully reversed order has nothing left and is not listed.
+        $this->reverse($fully = $this->orderWithPoints(4), 4);
+        $this->assertNotContains($fully->id, collect($this->getJson('/api/user/points/valid')->json('orders'))->pluck('order_id'));
 
         $this->getJson("/api/user/order-details/{$returned->id}")->assertNotFound();
         $this->assertArrayNotHasKey($returned->id, collect($this->getJson('/api/user/orders/grouped-by-status')->json('data'))->flatten(1)->keyBy('order_id'));

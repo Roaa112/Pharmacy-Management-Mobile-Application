@@ -80,7 +80,7 @@ class FinancialTest extends TestCase
 
     public function test_coupon_applies_to_subtotal_plus_delivery_and_can_reach_zero(): void
     {
-        $this->makeDeliveryPrice('Baghdad', 5);
+        $this->makeDeliveryPrice('Cairo', 5);
         $address = $this->makeAddress($this->user);
         $this->putInCart($this->user, $this->makeSize(price: 45), 1);
         Coupon::create(['code' => 'HALF', 'discount_value' => 50, 'is_active' => true]);

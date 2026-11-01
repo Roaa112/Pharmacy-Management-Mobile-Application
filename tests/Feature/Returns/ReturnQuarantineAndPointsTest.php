@@ -47,10 +47,10 @@ class ReturnQuarantineAndPointsTest extends TestCase
         $this->putInCart($this->customer, $size, $quantity);
         $orderId = $this->postJson('/api/user/orders', ['address_id' => -1, 'payment_method' => 'cash'])->assertCreated()->json('order_id');
 
-        $order = Order::findOrFail($orderId);
-        $order->update(['status' => 'completed']);
+        // Completed through the workflow, so the reserved units leave stock as they do in production.
+        app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition(Order::findOrFail($orderId), \App\Enums\OrderStatus::Completed, 'system');
 
-        return $order->fresh();
+        return Order::findOrFail($orderId);
     }
 
     private function requestReturn(Order $order, $amount = null): ReturnRequest
@@ -89,15 +89,16 @@ class ReturnQuarantineAndPointsTest extends TestCase
         $this->assertSame(1, $size->quarantined_stock);
 
         $movement = StockMovement::where('type', StockMovement::TYPE_RETURN_QUARANTINE)->sole();
-        $this->assertSame('quarantine', $movement->bucket);
+        // Bucket names follow inventory_balances since warehouses were introduced.
+        $this->assertSame('quarantined', $movement->bucket);
         $this->assertSame([0, 1, 1], [$movement->quantity_before, $movement->quantity_change, $movement->quantity_after]);
         $this->assertSame($this->admin->id, $movement->admin_id);
         $this->assertStringContainsString("order #{$order->id}", $movement->reason);
         // Linked to the return line, which links to the original order line.
         $this->assertSame($line->id, \App\Models\ReturnRequestItem::find($movement->reference_id)->order_item_id);
 
-        // The original sale movement is untouched.
-        $this->assertSame(1, StockMovement::where('type', 'sale')->count());
+        // The original fulfilment movement is untouched.
+        $this->assertSame(1, StockMovement::where('type', StockMovement::TYPE_FULFILLMENT)->where('bucket', 'on_hand')->count());
     }
 
     public function test_quarantined_units_cannot_be_bought(): void
@@ -198,7 +199,8 @@ class ReturnQuarantineAndPointsTest extends TestCase
         $this->assertSame(8, ProductSize::sole()->stock);
         $this->assertSame(0, ProductSize::sole()->quarantined_stock);
         $this->assertSame(0, LoyaltyPointReversal::count());
-        $this->assertSame(1, StockMovement::count() - StockMovement::where('type', 'initial')->count());
+        // Only the order's own rows: reservation, then fulfilment (on_hand and reserved). Nothing for the rejected return.
+        $this->assertSame(['reservation', 'fulfillment', 'fulfillment'], StockMovement::where('type', '!=', 'initial')->orderBy('id')->pluck('type')->all());
     }
 
     public function test_refund_without_received_goods_does_not_touch_inventory(): void
@@ -229,7 +231,8 @@ class ReturnQuarantineAndPointsTest extends TestCase
     public function test_ledger_rows_cannot_be_edited_or_deleted(): void
     {
         $this->completedOrder();
-        $movement = StockMovement::where('type', 'sale')->sole();
+        // Checkout reserves (a "reservation" row); the units leave stock at dispatch ("fulfillment").
+        $movement = StockMovement::where('type', StockMovement::TYPE_FULFILLMENT)->where('bucket', 'on_hand')->sole();
 
         try {
             $movement->update(['quantity_change' => 0]);
@@ -260,7 +263,7 @@ class ReturnQuarantineAndPointsTest extends TestCase
             ->assertOk()->assertSee('Points reversed')->assertSee('25');
         $this->actingAs($this->admin, 'admin')->get('/dashboard/inventory/movements?type=return_quarantine')
             ->assertOk()->assertSee("Return #{$return->id}");
-        $this->actingAs($this->admin, 'admin')->get('/dashboard/inventory')->assertOk()->assertSee('returned units in quarantine');
+        $this->actingAs($this->admin, 'admin')->get('/dashboard/inventory?stock=quarantined')->assertOk()->assertSee('In quarantine'); // quarantine has its own filter since warehouses
     }
 
     // ---------- D2: proportional point reversal ----------
@@ -317,7 +320,7 @@ class ReturnQuarantineAndPointsTest extends TestCase
     {
         // Products 100.00 + delivery 20.00 = 120.00 paid; points earned on 100.00.
         $size = $this->makeSize(price: 50, stock: 10);
-        $this->makeDeliveryPrice('Baghdad', 20);
+        $this->makeDeliveryPrice('Cairo', 20);
         $address = $this->makeAddress($this->customer);
         Sanctum::actingAs($this->customer);
         $this->putInCart($this->customer, $size, 2);

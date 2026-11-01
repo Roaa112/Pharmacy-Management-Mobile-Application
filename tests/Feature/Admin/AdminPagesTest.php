@@ -55,7 +55,7 @@ class AdminPagesTest extends TestCase
         $this->size = $this->makeSize(price: 25, stock: 3);
         $this->size->product->update(['category_id' => $category->id, 'brand_id' => $brand->id, 'name_en' => 'Vitamin C 500']);
 
-        $address = Address::create(['user_id' => $this->customer->id, 'governorate' => 'Baghdad', 'city' => 'Baghdad', 'street' => 'Main', 'type' => 'home', 'landmark' => 'Near the park']);
+        $address = Address::create(['user_id' => $this->customer->id, 'governorate' => 'Cairo', 'city' => 'Cairo', 'street' => 'Main', 'type' => 'home', 'landmark' => 'Near the park']);
         $this->order = $this->makeOrder($this->customer, $this->size, 2, 'completed');
         $this->order->update(['address_id' => $address->id, 'points_earned' => 5, 'notes' => 'Ring twice']);
         $this->return = ReturnRequest::create(['user_id' => $this->customer->id, 'order_id' => $this->order->id, 'reason' => 'Damaged box', 'refund_amount' => 20]);
@@ -67,8 +67,8 @@ class AdminPagesTest extends TestCase
         DB::table('discount_rule_targets')->insert(['discount_rule_id' => $ruleId, 'target_type' => 'brand', 'target_id' => $brand->id]);
         Banner::create(['title_en' => 'Summer', 'title_ar' => 'صيف', 'image' => 'banners/s.png', 'link' => url('/api/v1/user/brands'), 'status' => 1, 'order_of_appearance' => 1]);
         OpeningAd::create(['image' => 'OpeningAdS/a.png', 'is_active' => 1]);
-        DeliveryPrice::create(['governorate' => 'Baghdad', 'price' => 5]);
-        Setting::create(['spend_x' => '10', 'get_y' => '1', 'points_validity_days' => 30, 'phone_number' => '0770000000']);
+        DeliveryPrice::create(['governorate' => 'Cairo', 'price' => 5]);
+        Setting::create(['spend_x' => '10', 'get_y' => '1', 'points_validity_days' => 30, 'phone_number' => '0100000000']);
         ContactMessage::create(['name' => 'Omar', 'email' => 'omar@example.com', 'message' => 'Hello', 'user_id' => $this->customer->id]);
         BloodPressureMeasurement::create(['user_id' => $this->customer->id, 'systolic' => 120, 'diastolic' => 80, 'condition_type' => 'rest', 'measured_at' => now()]);
         Child::create(['user_id' => $this->customer->id, 'child_name' => 'Lina', 'gender' => 'أنثى', 'birth_date' => '2024-01-01']);
@@ -104,7 +104,17 @@ class AdminPagesTest extends TestCase
             'flash sales' => ['/dashboard/flash_sales'],
             'banners' => ['/dashboard/banners'],
             'opening ads' => ['/dashboard/OpeningAd'],
-            'delivery prices' => ['/dashboard/delivery_prices'],
+            'delivery zones' => ['/dashboard/delivery/zones'],
+            'delivery providers' => ['/dashboard/delivery/providers'],
+            'shipments' => ['/dashboard/delivery/shipments'],
+            'shipments needing attention' => ['/dashboard/delivery/shipments?attention=1&cod_unsettled=1'],
+            'cities and areas' => ['/dashboard/cities'],
+            'payment methods' => ['/dashboard/payment-methods'],
+            'admins' => ['/dashboard/admins'],
+            'audit log' => ['/dashboard/audit-log'],
+            'health content: vaccines' => ['/dashboard/health-content/vaccines'],
+            'health content: pregnancy' => ['/dashboard/health-content/pregnancy'],
+            'health: reminders' => ['/dashboard/health-results/notifications'],
             'contact messages' => ['/dashboard/contacts'],
             'settings' => ['/dashboard/settings'],
             'health: body weight' => ['/dashboard/health-results/body-weight'],

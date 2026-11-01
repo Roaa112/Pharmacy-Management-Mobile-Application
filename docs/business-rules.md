@@ -3,32 +3,60 @@
 Reference for developers and the business owner. "Decision needed" marks behaviour that is
 implemented as it was originally written but that the business has not confirmed.
 
+**The store currently operates in Egypt only and uses EGP.** There is no country selection for
+customers or admins and no multi-country behaviour: addresses, delivery zones and rates use Egyptian
+governorates/areas, prices and payments are in EGP, and the store clock is Egyptian local time
+(`Africa/Cairo`, UTC+2, UTC+3 in summer time). Orders record `country_id` (Egypt) and `currency_code`
+(EGP) at checkout; recorded values are never rewritten.
+
 ## 1. Stock
 
-Stock is kept per product size (`product_sizes.stock`). There is no purchase/supplier module;
-stock only enters the system through the admin product screens.
+Stock is kept per SKU (`product_sizes`: size, colour, SKU, barcode, cost) **and per warehouse**
+(`inventory_balances`), in five buckets:
 
-Every change to stock goes through `ProductSize::moveStock()` / `ProductSize::setStock()`, which
-lock the size row, refuse to go below zero and write one row to `stock_movements` in the same
-database transaction.
+| Bucket | Meaning | Sellable? |
+|---|---|---|
+| `on_hand` | Physically in the warehouse, in sellable condition | yes, minus reserved |
+| `reserved` | Part of `on_hand` held for customer orders not dispatched yet | no |
+| `damaged` | Found or received damaged; awaiting write-off or return to the supplier | no |
+| `quarantined` | Returned by customers (or undelivered); awaiting inspection (D1) | no |
+| `in_transit` | Dispatched to this warehouse by a transfer, not received yet | no |
 
-| Event | Movement type | Stock change | Recorded by |
-|---|---|---|---|
-| Admin creates a product / adds a size | `initial` | 0 → entered value | admin |
-| Customer checks out | `sale` | − quantity, one row per order line | customer |
-| Admin cancels an order | `cancellation` | + quantity, one row per order line | admin |
-| Admin changes the stock field | `adjustment` | + / − the admin's change | admin |
-| Admin removes a size that was sold before | `adjustment` | → 0 (row kept for history) | admin |
-| Return accepted, units received back | `return_quarantine` (bucket `quarantine`) | `quarantined_stock` + units; sellable `stock` unchanged (D1) | admin |
+`product_sizes.stock` (what the app shows and checkout checks) = Σ (`on_hand` − `reserved`) over
+**sellable** warehouses. `quarantined_stock` = Σ `quarantined`. Both are projections written
+only by `InventoryService`, in the same transaction as the balances; `php artisan inventory:verify`
+checks them daily.
 
-Ledger rows are append-only: the `StockMovement` model refuses updates and deletes, and no admin
-screen offers either. Each row has a `bucket`: `sellable` (describes `stock`) or `quarantine`
-(describes `quarantined_stock`).
+Every change goes through `InventoryService`: it locks the SKU row first (one lock order, so
+concurrent orders wait instead of overselling or deadlocking), refuses any bucket below zero and
+`reserved` above `on_hand`, and writes one immutable `stock_movements` row per bucket changed,
+with before/after, warehouse, reference, actor and reason. Each business event has an
+idempotency key (unique in the database): repeating it changes nothing.
 
-A unique key on `(type, reference_type, reference_id)` makes it impossible to record the sale
-or the cancellation of the same order line twice, even if a request is repeated.
+| Event | Movement type | Buckets |
+|---|---|---|
+| Size created with stock / opening balance | `initial` / `opening_balance` | on_hand + |
+| Goods received from a supplier | `purchase_receipt` | on_hand + (damaged + for broken units) |
+| Customer checks out | `reservation` | reserved + (default sellable warehouse first, then others) |
+| Order dispatched (`on_delivery`) or completed | `fulfillment` (`gift` for gift lines) | on_hand −, reserved − |
+| Order canceled before dispatch | `reservation_release` | reserved − |
+| Order canceled after dispatch | `cancellation_return` | quarantined + |
+| Shipment returned undelivered | `shipment_return` | quarantined + |
+| Return accepted, units received back | `return_quarantine` | quarantined + |
+| Quarantine inspected | `return_restock` / `return_damaged` / `write_off` | quarantined → on_hand / damaged / out |
+| Units found damaged; damaged destroyed | `damage`; `write_off` | on_hand → damaged; damaged − |
+| Transfer dispatched / received / closed short | `transfer_out` + `transfer_dispatch` / `transfer_in` / `transfer_loss` | on_hand → in_transit → on_hand |
+| Stock count completed | `count_correction` | on_hand ± (counted − on hand at completion) |
+| Goods returned to a supplier | `supplier_return` | on_hand / damaged / quarantined − |
+| Admin adjustment (reason required) | `adjustment` | on_hand ± |
 
-**Admin stock edits.** The edit form remembers the stock it showed (`stock_original`).
+Rows written before warehouses existed keep `warehouse_id = null` and bucket `sellable` /
+`quarantine`; the migration added `opening_balance` rows so the ledger sums to the balances.
+
+**Purchasing.** A purchase order never changes stock; only receipts do (partial receipts allowed,
+over-receiving refused, weighted average cost updated). Supplier balance = invoices − payments −
+dispatched return credits.
+**Admin stock edits (product form).** Changes apply to the default warehouse; the warehouse-aware operations are on Inventory → SKU. The edit form remembers the stock it showed (`stock_original`).
 If the admin did not touch the field, stock is left alone, so sales made while the form was open
 are kept. If the admin changed it (e.g. 10 → 60 after a delivery), that difference (+50) is
 applied to the current stock. A change that would make stock negative is rejected with
@@ -57,31 +85,91 @@ pending ──► confirmed ──► on_delivery ──► completed
 ```
 
 * Status can only move forward; steps may be skipped (e.g. pending → completed for pickup).
-* `completed` and `canceled` are final.
-* Only admins change status (dashboard). Customers cannot cancel (decision D4).
-* Cancel returns every line's quantity to stock exactly once.
+* `completed` and `canceled` are final. The graph is protected code (`App\Enums\OrderStatus`).
+* Every change goes through `OrderWorkflow::transition()`: dashboard, customer cancellation and
+  shipment events alike. Each change writes `order_status_histories` (from, to, actor type, actor id).
+* Customers may cancel their own **pending** orders only when `settings.customer_can_cancel_pending`
+  is on (`POST /api/user/orders/{id}/cancel`). Off by default (decision D4).
+* Cancel returns every line's quantity (gift lines included) to stock exactly once, cancels open
+  shipments and writes a ledger "reverse" for the points.
+* Orders keep a snapshot of the delivery address (`shipping_address`), the country and the currency.
 
-Checkout (one database transaction): lock the cart and the sizes → check stock → recalculate
-every price from the catalogue → gifts → points → coupon → create order and lines → stock
-`sale` movements → empty the cart → record coupon use.
+### Delivery
+
+```
+address ─► city (city_id, or exact name of governorate/city) ─► zone (area zone wins) ─► rate
+```
+
+* The active rate in effect (store clock) with the highest priority prices the delivery:
+  `fee`, free above `free_over_amount` (items subtotal), refused below `min_order_amount`.
+* A shipment is created at checkout for address orders. Its status (`ShipmentStatus`) moves the order:
+  picked_up / in_transit → on_delivery, delivered → completed (cash then counts as paid).
+  failed / returned only flag the shipment for a person.
+* Shipment events are immutable and idempotent (unique key). Dashboard actions and provider webhooks
+  (`POST /api/webhooks/delivery/{code}`, HMAC signed) both go through `OrderFulfilment`.
+* Provider statuses are mapped per provider (`provider_status_maps`); an unmapped status is stored,
+  flagged, and changes nothing.
+
+Checkout (one database transaction): lock the customer, the cart and the sizes → check stock →
+price everything with the promotion engine (items, gifts, coupon, delivery; limited promotions and
+the coupon locked) → create order, lines and gift lines, promotion snapshots, usage reservations,
+stock reservations → empty the cart. See `docs/marketing-promotions.md`.
 
 ## 3. Money
 
+**Payment methods.** Only cash on delivery and Paymob can be offered. ZainCash and Qi Card are
+legacy (history only). Every order has `payments` rows (one per attempt); `orders.payment_status`
+is projected from the latest one by `PaymentService`.
+
+- *Paymob:* paid only on verified provider evidence (HMAC, optional API confirmation, matching
+  amount/currency/reference). No admin can mark it paid. Unpaid after `PAYMOB_PAYMENT_TTL_MINUTES`
+  → expired, order canceled, stock released. An online order cannot be confirmed before it is paid.
+- *Cash on delivery:* collected when the courier delivers (or at the counter on completion), partial
+  collections add up; **collection is not settlement** — cash counts as received by the pharmacy
+  only when a COD settlement records it (with any shortfall).
+- *Refunds:* an accepted return or a canceled paid order creates a pending refund; it changes the
+  payment and the order (`refund_status`) only once paid back (Paymob API, or cash/manual with a
+  reference). Refunds never exceed what was received.
+
 * Amounts are `DECIMAL(10,2)` in the database and calculated in integer minor units
   (`App\Support\Money`), rounding half up to 0.01. No totals are accepted from the app.
-* Item price = size price after **one** promotion, from one function (`Product::priceForSize`) used by
-  listing, details, cart, coupon preview and checkout (decision D7):
-  1. a flash sale, only while it is active **and** the store clock is in `[start, start + 60 min)`
-     (live exactly at the start, over exactly at the end);
-  2. otherwise the first active discount rule for the product, brand or category;
-  3. no stacking of the two. The coupon then applies to the order total at checkout.
+* Every price comes from the promotion engine (`App\Modules\Promotions\Engine\PromotionEngine`), used by
+  listing, details, cart, coupon preview, checkout and the dashboard preview (decision D7). Item price =
+  size price after **one** item promotion unless promotions are explicitly stackable:
+  1. a live flash sale (active **and** the store clock in `[start, end)`) wins;
+  2. then higher priority, then the more specific target (variant > product > brand > category), then the older rule;
+  3. flash sales never stack; discount rules stack only when both are marked stackable.
+  Gifts, Spend X rewards, free delivery and coupons follow; the full order and the conflict rules are in
+  `docs/marketing-promotions.md`.
 * Promotion and coupon dates are local wall-clock times. They are compared with `StoreClock::now()`
-  (timezone `PHARMACY_TIMEZONE`, default Asia/Baghdad = the +3 hours checkout used before).
+  (Egyptian local time: `PHARMACY_TIMEZONE`, default `Africa/Cairo`).
 * Order lines keep `price_at_time`, `total_price`, and from now on `product_name_ar/en` and `size_label`.
-* Order total = items + delivery fee − coupon. The coupon percentage applies to items + delivery.
+* Order total = items (after item promotions) + delivery fee − automatic order discounts − coupon − delivery
+  discount. The coupon discount formula (`CouponEvaluator`) serves the cart preview and checkout: percent or fixed, optional minimum order and maximum discount, per-customer
+  limit. Whether it also discounts delivery is per coupon, else `settings.coupon_applies_to_delivery`
+  (default on, as before — D9). The preview includes delivery when the app sends `address_id`.
+* Among discount rules at equal priority, the most specific wins (variant, product, brand, category; oldest first).
+* A flash sale lasts until its `ends_at` (required in the dashboard; sales saved before carry the one hour
+  they always had, written onto the row by the 2026_11_07 migration).
+* Promotional gifts are cart lines the backend adds and removes (price 0, not editable) and order lines
+  at price 0 that are reserved and leave stock like any line. A gift must name a product (and optionally
+  a variant); brand/category gift targets are a configuration error.
 * Points = floor(items subtotal ÷ `spend_x`) × `get_y`, on the subtotal before delivery and coupon.
-* There is no payment gateway: `payment_method` is recorded, with a receipt image for
-  zaincash/qicard. No amounts are paid through the API, so overpayment cannot happen here.
+* Payment methods are data (`payment_methods`), all in EGP. Only cash on delivery and Paymob can be
+  offered (`PaymentMethod::ACTIVE_PROVIDERS`); Paymob only once it is configured.
+* **ZainCash has been removed as an active payment provider. Historical ZainCash records are preserved.**
+  * Checkout, the payment-methods API and the dashboard no longer offer or configure it; its
+    `payment_methods` row is kept as *retired* (inactive, `is_legacy`), read-only, with the old wallet number.
+  * The ZainCash setting (`settings.zaincash`) was removed by migration `2026_11_05_000001`; the settings
+    API still returns `zaincash: null` so older apps stop offering it.
+  * Past ZainCash orders keep `payment_method = 'zaincash'`, their `payment_method_id`, receipt and
+    `manual_transfer` payment; they appear in order history, the dashboard (filterable), reports and
+    refunds, and a pending receipt can still be verified by an admin. Historical data is never rewritten.
+  * Qi Card is retired the same way (its `settings.keycard` column is still in place).
+* `payment_status`: unpaid → paid (cash on completion, Paymob on confirmation); historical transfer
+  receipts: awaiting_verification → paid/failed by an admin. Refunds reach the total → refunded.
+  The verifying admin and time are recorded.
+* Revenue = completed orders − refunds approved on them, grouped by the store's local day (D3).
 
 ## 4. Returns and refunds
 
@@ -95,8 +183,10 @@ every price from the catalogue → gifts → points → coupon → create order 
      never sellable; no more units than were ordered can be returned (decision D1). Releasing
      quarantined stock is **not implemented**: it needs its own authorised, audited process;
   3. reverses loyalty points in proportion to the money refunded (decision D2, section 5).
-* The order is then hidden from the customer's order list and excluded from dashboard revenue
-  (unchanged; D3 still open). The customer can still request a further partial return on it.
+* The order is then hidden from the customer's order list (unchanged). Revenue drops by the approved
+  refund, not by the whole order (D3). The customer can still request a further partial return on it.
+* When `settings.return_window_days` is set, only completed orders within that many days of
+  completion can be returned. Unset = no limit (original behaviour).
 
 ## 5. Loyalty points
 
@@ -120,11 +210,14 @@ every price from the catalogue → gifts → points → coupon → create order 
 |---|---|---|
 | D1 | ~~Returned stock back on sale?~~ **Decided:** quarantined, never resold automatically | Implemented |
 | D2 | ~~Refunded orders lose points?~~ **Decided:** proportional to the refunded amount | Implemented |
-| D3 | Partial refund: should revenue drop by the refunded amount instead of the whole order? | Whole order is excluded once any return is accepted |
-| D4 | May customers cancel their own pending orders? | Only admins can cancel |
-| D5 | When an order with a coupon is canceled, can the customer use the coupon again? | Coupon stays used |
+| D3 | ~~Partial refund revenue?~~ **Implemented:** revenue drops by the approved refund. The order stays hidden from the customer's list (confirm) | Net revenue |
+| D4 | May customers cancel their own pending orders? Now a setting | Off (only admins), as before |
+| D5 | When an order with a coupon is canceled, can the customer use the coupon again? Now a setting (`coupon_release_on_cancel`) | **Yes** (use released) by default; refunds after delivery keep the use |
 | D6 | ~~Sold-out products visible?~~ **Decided:** visible, marked out of stock, not purchasable | Implemented |
 | D7 | ~~Flash sale window?~~ **Decided:** one price everywhere; flash sale only inside its window | Implemented |
 | D8 | Admin stock edits apply the difference (correct for deliveries). Is a "physical count" mode needed that sets an exact number? | Difference |
-| D9 | Should the coupon discount the delivery fee too? | Yes (unchanged) |
+| D9 | Should the coupon discount the delivery fee too? Now a setting and a per-coupon choice | Yes (unchanged default) |
 | D10 | `points_validity_days = 0`: the code comment says "no expiry", but it means "expires today". | Expires today (unchanged) |
+| D11 | ~~Which market is the store in?~~ **Decided:** Egypt only, EGP. Delivery zones created from old production delivery prices with non-Egyptian names (e.g. Baghdad, Karbala) are kept as data; an admin should deactivate them | Egypt / EGP / Africa/Cairo |
+| D12 | ~~Brand/category gift targets?~~ **Decided:** a gift names a product (and optionally a variant); brand/category gift rules are flagged as errors and cannot be activated | Implemented |
+| D13 | Partially refunded orders are hidden from the customer's order list, but their remaining points are shown | As described |

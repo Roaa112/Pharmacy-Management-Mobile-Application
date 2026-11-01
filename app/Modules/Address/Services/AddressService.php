@@ -93,6 +93,9 @@ class AddressService
         'landmark'    => $request['landmark'] ?? null,
         'type'        => $request['type'] ?? null,
         'is_default'  => $request['is_default'] ?? false,
+        // Not sent by older apps: the city is then linked by name when delivery is priced.
+        'city_id'     => $request['city_id'] ?? null,
+        'area_id'     => isset($request['city_id']) ? ($request['area_id'] ?? null) : null,
     ];
 
     if (!$isUpdate) {

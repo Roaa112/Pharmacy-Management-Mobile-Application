@@ -14,12 +14,19 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class SanitizeListingParameters
 {
+    public const MAX_LIMIT = 100;
+
     public function handle(Request $request, Closure $next): Response
     {
         $query = $request->query;
 
         if ($query->has('limit') && !$this->isWholeNumber($query->all()['limit'] ?? null, 1)) {
             $query->remove('limit');
+        }
+
+        // No listing returns more than MAX_LIMIT rows per request; larger values are lowered.
+        if ($query->has('limit') && (int) $query->all()['limit'] > self::MAX_LIMIT) {
+            $query->set('limit', (string) self::MAX_LIMIT);
         }
 
         if ($query->has('offset') && !$this->isWholeNumber($query->all()['offset'] ?? null, 0)) {

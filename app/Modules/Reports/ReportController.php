@@ -17,7 +17,8 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Business reports calculated from orders, returns and stock.
- * Revenue = completed orders without an accepted return (same rule as the dashboard).
+ * Revenue = completed orders minus the refunds approved on them (see Revenue).
+ * Days are the store's local calendar days (PHARMACY_TIMEZONE), not UTC days.
  */
 class ReportController extends Controller
 {
@@ -32,10 +33,9 @@ class ReportController extends Controller
         $from = isset($validated['from']) ? Carbon::parse($validated['from'])->startOfDay() : $to->copy()->subDays(29)->startOfDay();
 
         $inRange = fn () => Order::whereBetween('created_at', [$from, $to]);
-        $revenueOrders = fn () => $inRange()->where('status', 'completed')
-            ->whereDoesntHave('returnRequests', fn ($q) => $q->where('status', 'accepted'));
+        $revenueOrders = fn () => Revenue::completed($inRange());
 
-        $revenue = (float) $revenueOrders()->sum('total_price');
+        $revenue = Revenue::net($inRange());
         $completed = $revenueOrders()->count();
 
         $summary = [
@@ -50,7 +50,7 @@ class ReportController extends Controller
         $statusCounts = $inRange()->select('status', DB::raw('COUNT(*) as total'))->groupBy('status')->pluck('total', 'status');
 
         // Daily revenue in the range.
-        $dailyRevenue = $revenueOrders()->selectRaw('DATE(created_at) as day, SUM(total_price) as revenue')->groupBy('day')->pluck('revenue', 'day');
+        $dailyRevenue = $revenueOrders()->selectRaw(Revenue::localDate('orders.created_at').' as day, '.Revenue::NET_SUM.' as revenue')->groupBy('day')->pluck('revenue', 'day');
         $daily = ['labels' => [], 'revenue' => []];
         foreach (CarbonPeriod::create($from->copy()->startOfDay(), $to->copy()->startOfDay()) as $day) {
             $daily['labels'][] = $day->format('M j');
@@ -76,7 +76,7 @@ class ReportController extends Controller
             ->get();
 
         $returns = ReturnRequest::whereBetween('created_at', [$from, $to])
-            ->select('status', DB::raw('COUNT(*) as total'), DB::raw('COALESCE(SUM(refund_amount), 0) as amount'))
+            ->select('status', DB::raw('COUNT(*) as total'), DB::raw('COALESCE(SUM(COALESCE(approved_amount, refund_amount)), 0) as amount'))
             ->groupBy('status')
             ->get()
             ->keyBy('status');
@@ -94,8 +94,22 @@ class ReportController extends Controller
             'reversed' => (int) LoyaltyPointReversal::whereBetween('created_at', [$from, $to])->sum('points'),
         ];
 
+        // Non-canceled orders per payment method, with what is still awaiting verification.
+        $payments = $inRange()->where('status', '!=', 'canceled')
+            ->select('payment_method', DB::raw('COUNT(*) as orders'), DB::raw('SUM(total_price) as value'),
+                DB::raw("SUM(CASE WHEN payment_status = 'awaiting_verification' THEN 1 ELSE 0 END) as to_verify"))
+            ->groupBy('payment_method')->get();
+
+        // Shipments of orders in the range: status counts, delivery fees charged and cash on delivery.
+        $delivery = \App\Models\Shipment::whereIn('order_id', $inRange()->select('id'))
+            ->select('status', DB::raw('COUNT(*) as total'), DB::raw('SUM(fee_charged) as fees'), DB::raw('SUM(cod_amount) as cod'))
+            ->groupBy('status')->get();
+        $codOutstanding = (float) \App\Models\Shipment::whereIn('order_id', $inRange()->select('id'))
+            ->whereNotNull('cod_collected_at')->whereNull('cod_settled_at')->sum('cod_amount');
+
         return view('dashboard.reports.index', compact(
-            'from', 'to', 'summary', 'statusCounts', 'daily', 'monthly', 'topProducts', 'slowMoving', 'returns', 'coupons', 'loyalty'
+            'from', 'to', 'summary', 'statusCounts', 'daily', 'monthly', 'topProducts', 'slowMoving', 'returns', 'coupons', 'loyalty',
+            'payments', 'delivery', 'codOutstanding'
         ));
     }
 
@@ -118,15 +132,13 @@ class ReportController extends Controller
     {
         $start = now()->startOfMonth()->subMonths(11);
 
-        $revenueByDay = Order::where('created_at', '>=', $start)
-            ->where('status', 'completed')
-            ->whereDoesntHave('returnRequests', fn ($q) => $q->where('status', 'accepted'))
-            ->selectRaw('DATE(created_at) as day, SUM(total_price) as revenue')
+        $revenueByDay = Revenue::completed(Order::where('created_at', '>=', $start))
+            ->selectRaw(Revenue::localDate('orders.created_at').' as day, '.Revenue::NET_SUM.' as revenue')
             ->groupBy('day')
             ->pluck('revenue', 'day');
 
         $customersByDay = User::where('created_at', '>=', $start)
-            ->selectRaw('DATE(created_at) as day, COUNT(*) as total')
+            ->selectRaw(Revenue::localDate('created_at').' as day, COUNT(*) as total')
             ->groupBy('day')
             ->pluck('total', 'day');
 

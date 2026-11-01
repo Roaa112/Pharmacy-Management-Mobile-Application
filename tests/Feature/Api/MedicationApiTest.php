@@ -206,6 +206,8 @@ class MedicationApiTest extends TestCase
             return count(DB::getQueryLog());
         };
 
+        // The first request also loads the default country (cached for the process).
+        $count();
         $few = $count();
         foreach (range(1, 5) as $i) {
             $this->createMedication(['name' => "Med {$i}", 'repeat_type' => 'every_day', 'days' => null]);

@@ -5,7 +5,16 @@ namespace Database\Seeders\Demo;
 use App\Models\Admin;
 use App\Models\Address;
 use App\Models\Coupon;
-use App\Models\DeliveryPrice;
+use App\Enums\OrderStatus;
+use App\Models\Country;
+use App\Models\DeliveryProvider;
+use App\Models\OrderStatusHistory;
+use App\Models\PaymentMethod;
+use App\Models\ProviderStatusMap;
+use App\Models\Shipment;
+use App\Models\ShipmentEvent;
+use App\Modules\Delivery\Services\DeliveryQuoteService;
+use App\Modules\Points\Services\LoyaltyService;
 use App\Models\DiscountRule;
 use App\Models\Order;
 use App\Models\OrderItem;
@@ -13,6 +22,8 @@ use App\Models\Product;
 use App\Models\ProductSize;
 use App\Models\Setting;
 use App\Models\StockMovement;
+use App\Modules\Inventory\Services\InventoryService;
+use App\Modules\Payments\Services\PaymentService;
 use App\Models\User;
 use App\Support\Money;
 use Carbon\Carbon;
@@ -31,18 +42,20 @@ class OrderSeeder extends Seeder
         $orders = [
             // email, lines [product, size index, qty], status, days ago, payment, coupon, points status
             ['sara@example.com', [['Paracetamol 500 mg', 0, 2], ['Vitamin C 1000 mg Effervescent', 0, 1]], 'completed', 45, 'cash', null, 'earned'],
-            ['sara@example.com', [['Intense Moisturizing Cream', 0, 1], ['Sunscreen SPF 50+', 0, 1]], 'completed', 12, 'zaincash', 'WELCOME10', 'earned'],
+            ['sara@example.com', [['Intense Moisturizing Cream', 0, 1], ['Sunscreen SPF 50+', 0, 1]], 'completed', 12, 'cash', 'WELCOME10', 'earned'],
             ['sara@example.com', [['Prenatal Multivitamin', 0, 1]], 'on_delivery', 1, 'cash', null, 'earned'],
             ['omar@example.com', [['Ibuprofen 400 mg', 0, 1], ['Omega-3 Fish Oil', 0, 1]], 'completed', 20, 'cash', null, 'redeemed'],
             ['omar@example.com', [['Honey Cough Syrup', 1, 1]], 'canceled', 6, 'cash', null, 'earned'],
             ['omar@example.com', [['Vitamin D3 5000 IU', 0, 2]], 'pending', 0, 'cash', null, 'earned'],
-            ['mona@example.com', [['No-Tears Baby Shampoo', 0, 2], ['Baby Diaper Cream', 0, 1]], 'completed', 15, 'qicard', null, 'earned'],
+            ['mona@example.com', [['No-Tears Baby Shampoo', 0, 2], ['Baby Diaper Cream', 0, 1]], 'completed', 15, 'cash', null, 'earned'],
             ['mona@example.com', [['Joint Relief Gel', 1, 1], ['No-Tears Baby Shampoo', 1, 1]], 'confirmed', 2, 'cash', 'HEALTH20', 'earned'],
             ['youssef@example.com', [['Blood Glucose Meter Kit', 0, 1], ['Glucose Test Strips', 0, 2]], 'completed', 25, 'cash', 'VIP50', 'earned'],
-            ['youssef@example.com', [['Digital Blood Pressure Monitor', 0, 1]], 'completed', 8, 'zaincash', null, 'earned'],
+            ['youssef@example.com', [['Digital Blood Pressure Monitor', 0, 1]], 'completed', 8, 'cash', null, 'earned'],
             ['youssef@example.com', [['Glucose Test Strips', 1, 1]], 'pending', 0, 'cash', null, 'earned'],
             ['nour@example.com', [['Antiseptic Mouthwash', 0, 1]], 'canceled', 3, 'cash', null, 'earned'],
         ];
+
+        $this->seedCourier();
 
         foreach ($orders as [$email, $lines, $status, $daysAgo, $payment, $couponCode, $pointsStatus]) {
             $this->placeOrder(User::where('email', $email)->firstOrFail(), $lines, $status, $daysAgo, $payment, $couponCode, $pointsStatus);
@@ -60,7 +73,7 @@ class OrderSeeder extends Seeder
         return $this->at(now()->subDays($daysAgo)->setTime(10 + $daysAgo % 8, 15), function () use ($user, $lines, $status, $payment, $couponCode, $pointsStatus) {
             return DB::transaction(function () use ($user, $lines, $status, $payment, $couponCode, $pointsStatus) {
                 $address = Address::where('user_id', $user->id)->orderByDesc('is_default')->first();
-                $deliveryFee = DeliveryPrice::where('governorate', $address?->governorate)->value('price') ?? 0;
+                $deliveryFee = $address ? Money::fromMinor(app(DeliveryQuoteService::class)->quote($address, 0)->feeMinor) : 0;
 
                 $items = collect($lines)->map(function ($line) {
                     [$name, $sizeIndex, $quantity] = $line;
@@ -73,14 +86,14 @@ class OrderSeeder extends Seeder
                 $subtotalMinor = $items->sum(fn ($i) => Money::toMinor($i['size']->price) * $i['quantity']);
                 $totalMinor = $subtotalMinor + Money::toMinor($deliveryFee);
 
-                $settings = Setting::first();
+                $settings = Setting::current();
                 $spendXMinor = Money::toMinor($settings?->spend_x);
                 $points = $spendXMinor > 0 ? intdiv($subtotalMinor, $spendXMinor) * (int) $settings->get_y : 0;
 
                 $coupon = $couponCode ? Coupon::where('code', $couponCode)->firstOrFail() : null;
-                if ($coupon) {
-                    $totalMinor -= min(Money::percentOf($totalMinor, $coupon->discount_value), $totalMinor);
-                }
+                $discountMinor = $coupon ? min(Money::percentOf($totalMinor, $coupon->discount_value), $totalMinor) : 0;
+                $totalMinor -= $discountMinor;
+                $country = Country::default();
 
                 $gift = $this->giftFor($items);
 
@@ -95,6 +108,17 @@ class OrderSeeder extends Seeder
                     'gift_rule_id' => $gift?->id,
                     'coupon_id' => $coupon?->id,
                     'points_earned' => $points,
+                    'subtotal' => Money::fromMinor($subtotalMinor),
+                    'discount_amount' => Money::fromMinor($discountMinor),
+                    'shipping_address' => $address?->snapshot(),
+                    'country_id' => $country?->id,
+                    'currency_code' => $country?->currency_code,
+                    'payment_method_id' => PaymentMethod::where('code', $payment)->value('id'),
+                    'payment_status' => match (true) {
+                        $status === 'completed' => 'paid',
+                        $payment !== 'cash' && $status !== 'canceled' => 'awaiting_verification',
+                        default => 'unpaid',
+                    },
                 ]);
 
                 foreach ($items as ['product' => $product, 'size' => $size, 'quantity' => $quantity]) {
@@ -111,10 +135,7 @@ class OrderSeeder extends Seeder
                         'size_label' => $size->size,
                     ]);
 
-                    ProductSize::moveStock($size->id, -$quantity, StockMovement::TYPE_SALE, [
-                        'reference' => $orderItem,
-                        'user_id' => $user->id,
-                    ]);
+                    app(InventoryService::class)->reserve($orderItem, ['user_id' => $user->id]);
                 }
 
                 if ($coupon) {
@@ -122,17 +143,32 @@ class OrderSeeder extends Seeder
                     $coupon->users()->attach($user->id);
                 }
 
-                if ($status === 'canceled') {
-                    foreach ($order->items as $item) {
-                        ProductSize::moveStock($item->product_size_id, $item->quantity, StockMovement::TYPE_CANCELLATION, [
-                            'reference' => $item,
-                            'admin_id' => Admin::value('id'),
-                            'reason' => "Order #{$order->id} canceled",
-                        ]);
+                // The same stock path as the workflow: dispatched orders fulfil, canceled ones release.
+                foreach ($order->items as $item) {
+                    if (OrderStatus::from($status)->isDispatched()) {
+                        app(InventoryService::class)->fulfil($item, ['admin_id' => Admin::value('id')]);
+                    } elseif ($status === 'canceled') {
+                        app(InventoryService::class)->releaseForCancellation($item, ['admin_id' => Admin::value('id')]);
                     }
                 }
 
-                $order->forceFill(['status' => $status, 'points_status' => $pointsStatus])->save();
+                $order->forceFill([
+                    'status' => $status,
+                    'points_status' => $pointsStatus,
+                    'completed_at' => $status === 'completed' ? now() : null,
+                    'canceled_at' => $status === 'canceled' ? now() : null,
+                ])->save();
+
+                $this->seedFulfilment($order, $address, $status);
+
+                // The payment record, as checkout creates it; delivered/completed cash is collected.
+                $payments = app(PaymentService::class);
+                $payment = $payments->createForCheckout($order, PaymentMethod::where('code', $payment)->firstOrFail());
+                if ($status === 'completed') {
+                    $payments->recordCodCollection($payment, $payment->amountMinor(), $address ? 'courier' : 'counter', PaymentService::ACTOR_SYSTEM, null, 'Collected on delivery');
+                } elseif ($status === 'canceled') {
+                    $payments->onOrderCanceled($order, PaymentService::ACTOR_ADMIN, Admin::value('id'));
+                }
 
                 return $order;
             });
@@ -142,6 +178,60 @@ class OrderSeeder extends Seeder
     /**
      * The gift rule checkout would attach (buy-x-get-y on a product target), with its description.
      */
+    /** Status history, a shipment with its events, and ledger rows, as checkout and the workflow write them. */
+    private function seedFulfilment(Order $order, ?Address $address, string $status): void
+    {
+        $steps = $status === 'canceled' ? ['pending', 'canceled'] : array_slice(OrderStatus::FLOW, 0, array_search($status, OrderStatus::FLOW, true) + 1);
+        $from = null;
+        foreach ($steps as $step) {
+            OrderStatusHistory::create(['order_id' => $order->id, 'from_status' => $from, 'to_status' => $step, 'actor_type' => $from ? 'admin' : 'customer', 'actor_id' => $from ? null : $order->user_id]);
+            $from = $step;
+        }
+
+        app(LoyaltyService::class)->recordEarn($order);
+
+        if (!$address) {
+            return;
+        }
+
+        $courier = DeliveryProvider::where('code', 'fast-courier')->first();
+        $shipmentStatus = ['pending' => 'pending', 'confirmed' => 'assigned', 'on_delivery' => 'in_transit', 'completed' => 'delivered', 'canceled' => 'canceled'][$status];
+        $shipment = Shipment::create([
+            'order_id' => $order->id,
+            'delivery_provider_id' => $shipmentStatus === 'pending' ? DeliveryProvider::default()?->id : $courier?->id,
+            'status' => $shipmentStatus,
+            'tracking_number' => $shipmentStatus === 'pending' ? null : 'FC'.str_pad((string) $order->id, 6, '0', STR_PAD_LEFT),
+            'fee_charged' => $order->delivery_fee,
+            'cod_amount' => $order->payment_method === 'cash' ? $order->total_price : 0,
+            'cod_collected_at' => $shipmentStatus === 'delivered' && $order->payment_method === 'cash' ? now() : null,
+            'recipient_name' => $order->user?->name,
+            'recipient_phone' => $order->user?->phone,
+            'address_snapshot' => $address->snapshot(),
+            'delivered_at' => $shipmentStatus === 'delivered' ? now() : null,
+        ]);
+
+        foreach (array_unique(['pending', $shipmentStatus]) as $i => $eventStatus) {
+            ShipmentEvent::create([
+                'shipment_id' => $shipment->id, 'status' => $eventStatus, 'source' => $i ? ShipmentEvent::SOURCE_WEBHOOK : ShipmentEvent::SOURCE_SYSTEM,
+                'raw_status' => $i ? strtoupper($eventStatus) : null, 'occurred_at' => now(), 'idempotency_key' => "demo:{$shipment->id}:{$eventStatus}", 'applied' => true,
+            ]);
+        }
+    }
+
+    /** An external courier with its own status vocabulary (mapped to ours). */
+    private function seedCourier(): void
+    {
+        $courier = DeliveryProvider::firstOrCreate(['code' => 'fast-courier'], [
+            'name' => 'Fast Courier (demo)', 'type' => DeliveryProvider::TYPE_EXTERNAL_API, 'adapter' => 'signed_webhook',
+            'webhook_secret' => 'demo-webhook-secret-change-me', 'tracking_url_template' => 'https://track.example.com/{tracking}',
+            'supports_cod' => true, 'is_active' => true, 'country_id' => Country::default()?->id,
+        ]);
+
+        foreach (['ASSIGNED' => 'assigned', 'PICKED' => 'picked_up', 'IN_TRANSIT' => 'in_transit', 'DELIVERED' => 'delivered', 'FAILED_ATTEMPT' => 'failed', 'RTO' => 'returned'] as $external => $internal) {
+            ProviderStatusMap::firstOrCreate(['delivery_provider_id' => $courier->id, 'external_status' => $external], ['internal_status' => $internal]);
+        }
+    }
+
     private function giftFor($items): ?DiscountRule
     {
         $rule = DiscountRule::with('targets')->where('discount_type', 'buy_x_get_y')->first();

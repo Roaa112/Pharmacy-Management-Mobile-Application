@@ -1,6 +1,6 @@
 @extends('admin.layout')
 
-@php $payment = ['cash' => 'Cash', 'zaincash' => 'Zain Cash', 'qicard' => 'Qi Card']; @endphp
+@php $payment = \App\Models\PaymentMethod::pluck('name_en', 'code')->all(); @endphp
 
 @section('title', 'Orders')
 @section('pretitle', 'Sales')
@@ -60,7 +60,7 @@
                         <td class="d-none d-md-table-cell">{{ $order->items_count }}</td>
                         <td class="d-none d-md-table-cell">
                             {{ $payment[$order->payment_method] ?? $order->payment_method }}
-                            @if (in_array($order->payment_method, ['zaincash', 'qicard']) && !$order->payment_image)
+                            @if ($order->payment_status === 'awaiting_verification' && !$order->payment_image)
                                 <div class="small text-danger">No receipt</div>
                             @endif
                         </td>

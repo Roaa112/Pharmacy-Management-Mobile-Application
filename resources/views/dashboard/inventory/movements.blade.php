@@ -1,66 +1,45 @@
 @extends('admin.layout')
 
-@php
-    $types = ['' => 'All', 'sale' => 'Sales', 'cancellation' => 'Cancellations', 'adjustment' => 'Adjustments', 'initial' => 'Opening stock', 'return_quarantine' => 'Returns (quarantine)'];
-    $tones = ['sale' => 'blue', 'cancellation' => 'orange', 'adjustment' => 'purple', 'initial' => 'teal', 'return_quarantine' => 'yellow'];
-@endphp
-
 @section('title', 'Stock movements')
-@section('pretitle')
-    <a href="{{ route('dashboard.inventory.index') }}" class="text-reset">Inventory</a>
-@endsection
-@section('subtitle')
-    @if ($size)
-        History of {{ $size->product->name_en ?? 'product' }} · {{ $size->size }} (now {{ $size->stock }} in stock).
-        <a href="{{ route('dashboard.inventory.movements', array_filter(['type' => $type])) }}">Show all sizes</a>
-    @else
-        Every change to stock, newest first. Records cannot be edited or deleted.
-    @endif
+@section('pretitle', 'Inventory')
+@section('subtitle', $size ? 'History of '.($size->product->name_en ?? 'product').' — '.$size->size.'.' : 'The stock ledger: every change of every bucket, with before and after. Rows can never be edited or deleted.')
+
+@section('actions')
+    <a href="{{ route('dashboard.inventory.index') }}" class="btn btn-outline-secondary"><i class="ti ti-arrow-left me-1"></i>Inventory</a>
 @endsection
 
 @section('content')
 <div class="card">
     <div class="card-header">
-        <ul class="nav nav-tabs card-header-tabs">
-            @foreach ($types as $value => $label)
-                <li class="nav-item">
-                    <a href="{{ route('dashboard.inventory.movements', array_filter(['type' => $value, 'size' => $size?->id])) }}" class="nav-link {{ (string) $type === $value ? 'active' : '' }}">{{ $label }}</a>
-                </li>
-            @endforeach
-        </ul>
+        <form method="GET" class="row g-2 w-100">
+            @if ($size)<input type="hidden" name="size" value="{{ $size->id }}">@endif
+            <div class="col-md-3"><input type="search" name="search" value="{{ request('search') }}" class="form-control" placeholder="Product, SKU or barcode" aria-label="Search"></div>
+            <div class="col-md-2"><select name="type" class="form-select" aria-label="Movement type"><option value="">All types</option>@foreach ($types as $t)<option value="{{ $t }}" @selected($type === $t)>{{ str_replace('_', ' ', $t) }}</option>@endforeach</select></div>
+            <div class="col-md-2"><select name="warehouse" class="form-select" aria-label="Warehouse"><option value="">All warehouses</option>@foreach ($warehouses as $w)<option value="{{ $w->id }}" @selected(request('warehouse') == $w->id)>{{ $w->code }}</option>@endforeach</select></div>
+            <div class="col-md-2"><input type="date" name="from" value="{{ request('from') }}" class="form-control" aria-label="From"></div>
+            <div class="col-md-2"><input type="date" name="to" value="{{ request('to') }}" class="form-control" aria-label="To"></div>
+            <div class="col-md-1"><button class="btn btn-primary w-100">Filter</button></div>
+        </form>
     </div>
-
     @if ($movements->isEmpty())
-        <x-admin.empty icon="arrows-exchange" title="No stock movements yet" text="Movements are recorded from now on, for sales, cancellations and admin stock changes." />
+        <x-admin.empty icon="arrows-exchange" title="No movements" />
     @else
         <div class="table-responsive">
-            <table class="table table-vcenter card-table">
-                <thead><tr><th>When</th><th>Product / size</th><th>Type</th><th class="text-end">Change</th><th class="text-end">Stock after</th><th>By</th><th>Reference</th></tr></thead>
+            <table class="table table-vcenter card-table table-sm">
+                <thead><tr><th>When</th><th>Product</th><th>Warehouse</th><th>Type</th><th>Bucket</th><th class="text-end">Before</th><th class="text-end">Change</th><th class="text-end">After</th><th>Reference</th><th>By / reason</th></tr></thead>
                 <tbody>
-                @foreach ($movements as $movement)
+                @foreach ($movements as $m)
                     <tr>
-                        <td class="small text-nowrap">{{ $movement->created_at?->format('M j, Y · H:i') }}</td>
-                        <td>
-                            <a href="{{ route('dashboard.inventory.movements', array_filter(['size' => $movement->product_size_id, 'type' => $type])) }}" class="text-reset">
-                                <span class="fw-medium">{{ $movement->size?->product?->name_en ?? 'Removed product' }}</span>
-                            </a>
-                            <div class="small text-secondary">{{ $movement->size->size ?? '—' }}</div>
-                        </td>
-                        <td><span class="badge bg-{{ $tones[$movement->type] ?? 'secondary' }}-lt">{{ $types[$movement->type] ?? $movement->type }}</span></td>
-                        <td class="text-end fw-bold {{ $movement->quantity_change < 0 ? 'text-danger' : 'text-success' }}">{{ $movement->quantity_change > 0 ? '+' : '' }}{{ $movement->quantity_change }}</td>
-                        <td class="text-end">{{ $movement->quantity_before }} → <strong>{{ $movement->quantity_after }}</strong>@if ($movement->bucket === 'quarantine')<div class="small text-orange">in quarantine</div>@endif</td>
-                        <td class="small">{{ $movement->admin_id ? 'Admin' : ($movement->user_id ? 'Customer' : 'System') }}</td>
-                        <td class="small">
-                            @if ($movement->reference_type === \App\Models\OrderItem::class && ($orderId = $orderIds[$movement->reference_id] ?? null))
-                                <a href="{{ route('dashboard.orders.show', $orderId) }}">Order #{{ $orderId }}</a>
-                            @endif
-                            @if ($movement->reference_type === \App\Models\ReturnRequestItem::class && ($returnId = $returnIds[$movement->reference_id] ?? null))
-                                <a href="{{ route('dashboard.returns.show', $returnId) }}">Return #{{ $returnId }}</a>
-                            @endif
-                            @if ($movement->reason)
-                                <div class="text-secondary">{{ $movement->reason }}</div>
-                            @endif
-                        </td>
+                        <td class="small text-nowrap">{{ $m->created_at?->format('Y-m-d H:i') }}</td>
+                        <td class="small">@if ($m->size)<a href="{{ route('dashboard.inventory.show', $m->product_size_id) }}">{{ $m->size->product->name_en ?? 'Product' }} — {{ $m->size->size }}</a>@else — @endif</td>
+                        <td class="small">{{ $m->warehouse?->code ?? 'legacy' }}</td>
+                        <td><span class="badge bg-azure-lt">{{ str_replace('_', ' ', $m->type) }}</span></td>
+                        <td class="small text-secondary">{{ str_replace('_', ' ', $m->bucket) }}</td>
+                        <td class="text-end">{{ $m->quantity_before }}</td>
+                        <td class="text-end fw-bold {{ $m->quantity_change < 0 ? 'text-red' : 'text-green' }}">{{ $m->quantity_change > 0 ? '+' : '' }}{{ $m->quantity_change }}</td>
+                        <td class="text-end">{{ $m->quantity_after }}</td>
+                        <td class="small text-secondary">{{ $m->reference_type ? class_basename($m->reference_type).' #'.$m->reference_id : '—' }}</td>
+                        <td class="small">{{ $m->admin?->name ?? ($m->user_id ? 'Customer' : 'System') }}<div class="text-secondary">{{ \Illuminate\Support\Str::limit($m->reason, 60) }}</div></td>
                     </tr>
                 @endforeach
                 </tbody>

@@ -2,8 +2,9 @@
 
 namespace App\Modules\Customers;
 
+use App\Modules\Points\Services\LoyaltyService;
 use App\Http\Controllers\Controller;
-use App\Models\LoyaltyPointReversal;
+use App\Models\AdminAuditLog;
 use App\Models\Order;
 use App\Models\Setting;
 use App\Models\User;
@@ -49,21 +50,15 @@ class CustomerController extends Controller
             ->latest()
             ->paginate(10);
 
+        $loyalty = app(LoyaltyService::class)->summary($customer->id);
+
         $summary = [
             'orders' => Order::where('user_id', $customer->id)->count(),
             'spent' => Order::where('user_id', $customer->id)->where('status', 'completed')->sum('total_price'),
-            // Same validity rule as the loyalty points page.
-            'points' => Order::where('user_id', $customer->id)
-                ->where('points_status', 'earned')
-                ->where('status', '!=', 'canceled')
-                ->where('created_at', '>=', now()->subDays(Setting::first()?->points_validity_days ?? 0))
-                ->withSum('pointReversals as points_reversed', 'points')
-                ->get(['id', 'points_earned'])
-                ->sum(fn ($order) => max(0, (int) $order->points_earned - (int) $order->points_reversed)),
+            // Same numbers as the loyalty points page and the customer app (LoyaltyService).
+            'points' => $loyalty['available'],
             // Points reversed by a refund after the customer had already redeemed them (decision D2).
-            'points_owed' => (int) LoyaltyPointReversal::where('user_id', $customer->id)
-                ->where('points_status_at_reversal', 'redeemed')
-                ->sum('points'),
+            'points_owed' => $loyalty['owed'],
             'returns' => $customer->returnRequests()->count(),
         ];
 
@@ -73,5 +68,23 @@ class CustomerController extends Controller
             'orders' => $orders,
             'summary' => $summary,
         ]);
+    }
+
+    /**
+     * Deactivate or reactivate a customer. A deactivated customer cannot log in and their tokens
+     * stop working; their orders and history stay (customers are never deleted).
+     */
+    public function toggleActive(User $customer)
+    {
+        $active = !$customer->isActive();
+        $customer->forceFill(['is_active' => $active])->save();
+
+        if (!$active) {
+            $customer->tokens()->delete();
+        }
+
+        AdminAuditLog::record($active ? 'customer.activate' : 'customer.deactivate', $customer);
+
+        return redirect()->back()->with('success', $active ? 'Customer reactivated.' : 'Customer deactivated and signed out.');
     }
 }

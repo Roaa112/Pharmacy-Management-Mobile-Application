@@ -2,18 +2,8 @@
 
 namespace App\Modules\FlashSale\Requests;
 
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rules\Enum;
-
-class UpdateFlashSaleRequest extends FormRequest
+/** Editing keeps the saved end when none is sent, and allows sales that already started. */
+class UpdateFlashSaleRequest extends StoreFlashSaleRequest
 {
-    public function rules(): array
-    {
-        return [
-            'discount_value' => 'required|numeric|min:0.01|max:100', // percentage
-            'is_active' => 'required|boolean', 
-            'date' => 'required|date|after_or_equal:today', 
-            'time' => 'required|date_format:H:i', 
-        ];
-    }
+    protected bool $endRequired = false;
 }

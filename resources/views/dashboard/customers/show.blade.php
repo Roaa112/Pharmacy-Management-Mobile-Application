@@ -6,6 +6,15 @@
 @endsection
 @section('subtitle', 'Customer since '.$customer->created_at?->format('M j, Y'))
 
+@section('actions')
+    @unless ($customer->isActive())<span class="badge bg-red-lt fs-5 py-2 px-3 me-2">Deactivated</span>@endunless
+    <form method="POST" action="{{ route('dashboard.customers.toggleActive', $customer) }}" class="d-inline"
+          data-confirm="{{ $customer->isActive() ? 'Deactivate this customer? They are signed out and cannot log in; their orders stay.' : 'Reactivate this customer?' }}">
+        @csrf @method('PATCH')
+        <button class="btn {{ $customer->isActive() ? 'btn-outline-danger' : 'btn-outline-success' }}">{{ $customer->isActive() ? 'Deactivate' : 'Reactivate' }}</button>
+    </form>
+@endsection
+
 @section('content')
 <div class="row row-cards">
     <div class="col-sm-6 col-xl-3"><x-admin.stat label="Orders" icon="shopping-cart" :value="number_format($summary['orders'])" /></div>

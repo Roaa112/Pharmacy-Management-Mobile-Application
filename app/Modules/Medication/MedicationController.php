@@ -8,6 +8,8 @@ use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use App\Models\MedicationDay;
 use App\Models\MedicationLog;
+use App\Models\Country;
+use App\Support\StoreClock;
 use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Controller;
 use App\Modules\Medication\Services\MedicationService;
@@ -33,10 +35,12 @@ public function index(Request $request)
         return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
     }
 
-    $weekDays = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+    // The week starts on the market's first day (countries.week_start, Saturday by default) and
+    // "today" is the pharmacy's local day, not the server's UTC day.
+    $weekDays = $this->weekDays();
 
     // الأسبوع الحالي يبدأ السبت
-    $weekStart = Carbon::today()->startOfWeek(Carbon::SATURDAY);
+    $weekStart = StoreClock::now()->startOfDay()->startOfWeek(Carbon::parse('next '.$weekDays[0])->dayOfWeek);
 
     // كل الأدوية وسجلات الأسبوع في استعلامين بدل استعلام لكل يوم ولكل موعد
     $medications = Medication::with('times', 'days')
@@ -131,13 +135,13 @@ public function index(Request $request)
 
     $shownDate = $request->input('shown_date') 
         ? Carbon::parse($request->input('shown_date'))->startOfDay() 
-        : Carbon::today();
+        : StoreClock::now()->startOfDay();
 
     // تحقق إذا التاريخ في المستقبل
-    if ($shownDate->gt(Carbon::today())) {
+    if ($shownDate->gt(StoreClock::now()->startOfDay())) {
         return response()->json([
             'success' => false,
-            'message' => 'لا يمن تعديل حلة جرعة ي المستقبل',
+            'message' => api_trans('health.medication.future_dose'),
         ], 422);
     }
 
@@ -160,7 +164,7 @@ public function index(Request $request)
 
     return response()->json([
         'success' => true,
-        'message' => 'تم تحديث حلة الجرعة بنجح',
+        'message' => api_trans('health.medication.dose_updated'),
     ]);
 }
     public function destroy(Request $request, Medication $medication)
@@ -192,7 +196,7 @@ public function index(Request $request)
 
     // ل النع every_day → نحو لـ specific_days مع باقي الأيام
     if ($medication->repeat_type === 'every_day') {
-        $allDays = ['saturday','sunday','monday','tuesday','wednesday','thursday','friday'];
+        $allDays = Country::WEEK_DAYS;
         $remainingDays = array_filter($allDays, fn($d) => $d !== $request->day);
 
        
@@ -231,6 +235,15 @@ public function index(Request $request)
     /**
      * Medications are personal health data: only their owner may read or change them.
      */
+    /** The seven days in order, starting with the market's first day of the week. */
+    private function weekDays(): array
+    {
+        $days = Country::WEEK_DAYS;
+        $start = array_search(Country::default()?->week_start ?? 'saturday', $days, true) ?: 0;
+
+        return [...array_slice($days, $start), ...array_slice($days, 0, $start)];
+    }
+
     private function ensureOwner(Request $request, Medication $medication): void
     {
         abort_unless((int) $medication->user_id === $request->user()->id, 404);

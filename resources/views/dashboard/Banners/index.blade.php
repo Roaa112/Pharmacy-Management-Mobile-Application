@@ -13,7 +13,7 @@
 
 @section('title', 'Banners')
 @section('pretitle', 'Marketing')
-@section('subtitle', 'Home screen banners in the mobile app, in order of appearance.')
+@section('subtitle', 'Banners in the mobile app. Customers only see active banners inside their dates, for their device. Display only: banners never change prices.')
 
 @section('actions')
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createBanner"><i class="ti ti-plus me-1"></i>New banner</button>
@@ -26,9 +26,9 @@
     @else
         <div class="table-responsive">
             <table class="table table-vcenter card-table">
-                <thead><tr><th>Banner</th><th>Opens</th><th>Status</th><th>Order</th><th class="w-1"></th></tr></thead>
+                <thead><tr><th>Banner</th><th>Opens</th><th>Placement</th><th>Status</th><th>Schedule</th><th>Order</th><th class="w-1"></th></tr></thead>
                 <tbody>
-                @foreach ($banners->sortBy('order_of_appearance') as $banner)
+                @foreach ($banners as $banner)
                     <tr>
                         <td>
                             <div class="d-flex align-items-center gap-3">
@@ -40,7 +40,9 @@
                             </div>
                         </td>
                         <td class="small">{{ $links[$banner->link] ?? $banner->link }}</td>
-                        <td><x-admin.status :status="$banner->status ? 'active' : 'inactive'" /></td>
+                        <td class="small">{{ str_replace('_', ' ', $banner->position ?? 'home') }}<div class="text-secondary">{{ $banner->device === 'all' ? 'All devices' : $banner->device }}</div></td>
+                        <td><x-admin.status :status="$banner->state()" /></td>
+                        <td class="small text-nowrap">{{ $banner->starts_at?->format('M j, Y H:i') ?? 'Any time' }}<br><span class="text-secondary">to {{ $banner->ends_at?->format('M j, Y H:i') ?? 'no end' }}</span></td>
                         <td>{{ $banner->order_of_appearance }}</td>
                         <td>
                             <div class="btn-list flex-nowrap">
@@ -70,7 +72,15 @@
             @if ($editing && $banner->image)
                 <div class="mb-2"><x-admin.thumb :src="asset($banner->image)" size="lg" style="width:9rem" alt="Current banner" /></div>
             @endif
-            <x-admin.input type="file" name="image" :label="$editing ? 'Replace image' : 'Image'" accept="image/*" />
+            <x-admin.input type="file" name="image" :label="$editing ? 'Replace image' : 'Image'" accept="image/jpeg,image/png,image/webp" hint="JPEG, PNG or WebP, up to 2 MB and 4000 px." />
+            <div class="row">
+                <x-admin.input col="col-md-6 mb-3" type="textarea" name="description_en" label="Description (English)" :value="$banner?->description_en" rows="2" />
+                <x-admin.input col="col-md-6 mb-3" type="textarea" name="description_ar" label="Description (Arabic)" :value="$banner?->description_ar" rows="2" dir="rtl" />
+                <div class="col-md-6 mb-3"><label class="form-label">Position</label><select name="position" class="form-select">@foreach (\App\Models\Banner::POSITIONS as $position)<option value="{{ $position }}" @selected(($banner?->position ?? 'home') === $position)>{{ str_replace('_', ' ', ucfirst($position)) }}</option>@endforeach</select></div>
+                <div class="col-md-6 mb-3"><label class="form-label">Device</label><select name="device" class="form-select">@foreach (\App\Models\Banner::DEVICES as $device)<option value="{{ $device }}" @selected(($banner?->device ?? 'all') === $device)>{{ $device === 'all' ? 'All devices' : ucfirst($device) }}</option>@endforeach</select></div>
+                <x-admin.input col="col-md-6 mb-3" type="datetime-local" name="starts_at" label="Show from" :value="$banner?->starts_at?->format('Y-m-d\TH:i')" hint="Empty = now." />
+                <x-admin.input col="col-md-6 mb-3" type="datetime-local" name="ends_at" label="Show until" :value="$banner?->ends_at?->format('Y-m-d\TH:i')" hint="Empty = no end." />
+            </div>
             <div class="mb-3">
                 <label class="form-label">Opens in the app</label>
                 <select name="link" class="form-select">
@@ -83,8 +93,8 @@
                 <div class="col-md-6 mb-3">
                     <label class="form-label">Status</label>
                     <select name="status" class="form-select">
-                        <option value="1" @selected((string) ($banner?->status ?? old('status', '1')) === '1')>Active</option>
-                        <option value="0" @selected((string) ($banner?->status ?? old('status', '1')) === '0')>Inactive</option>
+                        <option value="1" @selected($banner ? $banner->status : old('status', '1') === '1')>Active</option>
+                        <option value="0" @selected($banner ? !$banner->status : old('status', '1') === '0')>Inactive</option>
                     </select>
                 </div>
                 <x-admin.input col="col-md-6 mb-3" type="number" name="order_of_appearance" label="Order" :value="$banner?->order_of_appearance ?? old('order_of_appearance', 0)" min="0" />

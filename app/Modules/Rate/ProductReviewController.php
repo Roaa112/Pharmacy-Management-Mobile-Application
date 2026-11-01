@@ -37,7 +37,7 @@ class ProductReviewController extends Controller
         $product->rate = $product->reviews()->avg('rate');
         $product->save();
 
-        return response()->json(['message' => 'تم حفظ التقييم والمراجعة بنجاح.', 'data' => $review]);
+        return response()->json(['message' => api_trans('points.review_saved'), 'data' => $review]);
     }
 
     public function index(Product $product)

@@ -7,7 +7,9 @@ use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\ProductSize;
 use App\Models\ReturnRequest;
+use App\Models\Setting;
 use App\Models\User;
+use App\Modules\Reports\Revenue;
 use Carbon\CarbonPeriod;
 use Illuminate\Support\Facades\DB;
 
@@ -21,14 +23,12 @@ class HomeController extends Controller
 
     public function home()
     {
-        $lowStock = (int) config('pharmacy.low_stock_threshold');
+        $lowStock = Setting::current()->lowStockThreshold();
         $from = now()->subDays(29)->startOfDay();
 
         $stats = [
-            // Revenue: completed orders that were not refunded (same rule the orders page uses).
-            'revenue' => Order::where('status', 'completed')
-                ->whereDoesntHave('returnRequests', fn ($q) => $q->where('status', 'accepted'))
-                ->sum('total_price'),
+            // Revenue: completed orders minus approved refunds (same rule as the orders page and reports).
+            'revenue' => Revenue::net(Order::query()),
             'orders' => Order::count(),
             'pending_orders' => Order::where('status', 'pending')->count(),
             'completed_orders' => Order::where('status', 'completed')->count(),
@@ -74,19 +74,17 @@ class HomeController extends Controller
     }
 
     /**
-     * Orders per day and completed (non-refunded) revenue per day, every day filled in.
+     * Orders per day and net completed revenue per local day, every day filled in.
      */
     private function dailyTrend($from): array
     {
         $orders = Order::where('created_at', '>=', $from)
-            ->selectRaw('DATE(created_at) as day, COUNT(*) as orders')
+            ->selectRaw(Revenue::localDate('created_at').' as day, COUNT(*) as orders')
             ->groupBy('day')
             ->pluck('orders', 'day');
 
-        $revenue = Order::where('created_at', '>=', $from)
-            ->where('status', 'completed')
-            ->whereDoesntHave('returnRequests', fn ($q) => $q->where('status', 'accepted'))
-            ->selectRaw('DATE(created_at) as day, SUM(total_price) as revenue')
+        $revenue = Revenue::completed(Order::where('created_at', '>=', $from))
+            ->selectRaw(Revenue::localDate('orders.created_at').' as day, '.Revenue::NET_SUM.' as revenue')
             ->groupBy('day')
             ->pluck('revenue', 'day');
 
