@@ -23,7 +23,12 @@ class PaymentsSeeder extends Seeder
         $adminId = Admin::value('id');
 
         if ($refund = Refund::where('status', Refund::PENDING)->orderBy('id')->first()) {
-            app(RefundService::class)->process($refund, $adminId ?? 0, 'Cash voucher DEMO-1');
+            // Separation of duties: paid out by another admin than the one who approved it.
+            $cashierId = Admin::when($refund->requested_by, fn ($q) => $q->whereKeyNot($refund->requested_by))->orderBy('id')->value('id');
+            if (!$cashierId) {
+                config(['pharmacy.refund_dual_control' => false]); // a demo with a single admin
+            }
+            app(RefundService::class)->process($refund, $cashierId ?? $adminId ?? 0, 'Cash voucher DEMO-1');
         }
 
         $collected = Payment::where('provider', Payment::PROVIDER_COD)->where('collected_amount', '>', 0)->whereNull('settled_at')->orderBy('id')->get();

@@ -80,6 +80,8 @@
         <x-admin.input name="notes" type="textarea" label="Notes" />
     </x-admin.modal>
     <x-admin.modal id="paymentNew" title="Record payment to supplier" :action="route('dashboard.suppliers.payments.store', $supplier)">
+        {{-- One key per rendered form: a double submit records the payment once. --}}
+        <input type="hidden" name="request_key" value="{{ \Illuminate\Support\Str::uuid() }}">
         <div class="mb-3"><label class="form-label">Invoice</label><select name="supplier_invoice_id" class="form-select"><option value="">On account</option>@foreach ($supplier->invoices as $inv)<option value="{{ $inv->id }}">{{ $inv->number }} ({{ number_format((float) $inv->amount - (float) $inv->payments_sum_amount, 2) }} left)</option>@endforeach</select></div>
         <div class="row"><x-admin.input col="col-6 mb-3" name="amount" type="number" step="0.01" min="0.01" label="Amount" required /><x-admin.input col="col-6 mb-3" name="paid_on" type="date" label="Paid on" required /></div>
         <div class="row"><x-admin.input col="col-6 mb-3" name="method" label="Method" hint="Bank transfer, cash…" /><x-admin.input col="col-6 mb-3" name="reference" label="Reference" /></div>

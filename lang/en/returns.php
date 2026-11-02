@@ -9,4 +9,5 @@ return [
     'created' => 'Return request sent',
     'cannot_cancel' => 'This return request was already processed',
     'canceled' => 'Return request canceled',
+    'not_delivered' => 'Only items that were shipped to you can be returned',
 ];

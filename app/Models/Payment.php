@@ -23,7 +23,7 @@ class Payment extends Model
 
     protected $fillable = [
         'order_id', 'payment_method_id', 'provider', 'internal_reference', 'provider_order_id', 'provider_transaction_id',
-        'amount', 'currency', 'status', 'attempt', 'failure_reason', 'collection_status', 'collected_amount',
+        'amount', 'currency', 'status', 'attempt', 'duplicate_of_payment_id', 'failure_reason', 'collection_status', 'collected_amount',
         'collected_via', 'collected_by', 'collected_at', 'cod_settlement_id', 'settled_at', 'refunded_amount',
         'verified_by', 'verified_at', 'receipt_path', 'paid_at', 'failed_at', 'expires_at', 'refunded_at', 'metadata',
     ];
@@ -61,6 +61,12 @@ class Payment extends Model
         $received = $this->isCod() ? Money::toMinor($this->collected_amount) : ($this->status->isSettledPayment() ? $this->amountMinor() : 0);
 
         return max(0, $received - Money::toMinor($this->refunded_amount));
+    }
+
+    /** Captured although the order was already paid by another attempt (refunded, never applied). */
+    public function isDuplicateCapture(): bool
+    {
+        return $this->duplicate_of_payment_id !== null;
     }
 
     public function order()

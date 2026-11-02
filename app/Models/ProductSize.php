@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Modules\Inventory\Services\InventoryService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -81,23 +82,31 @@ class ProductSize extends Model
      * InventoryService directly.
      *
      * $context keys: reference (Model), user_id, admin_id, reason.
+     *
+     * Units removed come from sellable batches only (not expired, not inside the minimum shelf
+     * life): this changes the catalogue stock, so taking short-dated units would leave the
+     * catalogue number unchanged. Physical corrections go through InventoryService::adjust().
      */
     public static function moveStock(int $sizeId, int $change, string $type, array $context = []): ?StockMovement
     {
         $inventory = app(InventoryService::class);
 
-        return $inventory->apply($sizeId, $inventory->defaultWarehouseId(), ['on_hand' => $change], $type, $context, static::movementKey($type, $context))->first();
+        return $inventory->apply($sizeId, $inventory->defaultWarehouseId(), ['on_hand' => $change], $type,
+            $context + ['sellable_only' => true], static::movementKey($type, $context))->first();
     }
 
     /**
      * Set the sellable units (across sellable warehouses) to an absolute value; the difference
-     * is applied to the default warehouse.
+     * is applied to the default warehouse. The current value is read under the SKU lock, so a
+     * concurrent change is not overwritten by a difference computed from a stale number.
      */
     public static function setStock(int $sizeId, int $newStock, string $type, array $context = []): ?StockMovement
     {
-        $current = (int) static::whereKey($sizeId)->value('stock');
+        return DB::transaction(function () use ($sizeId, $newStock, $type, $context) {
+            $current = (int) static::lockForUpdate()->findOrFail($sizeId)->stock;
 
-        return static::moveStock($sizeId, $newStock - $current, $type, $context);
+            return static::moveStock($sizeId, $newStock - $current, $type, $context);
+        });
     }
 
     /** Move units into or out of quarantine in the default warehouse (returned medicine, decision D1). */

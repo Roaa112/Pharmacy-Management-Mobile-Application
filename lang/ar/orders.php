@@ -40,4 +40,5 @@ return [
     'status_updated' => 'تم تحديث حالة الطلب بنجاح',
     'size_unavailable' => 'غير متوفر',
     'gift_description' => 'هدية: :product',
+    'coupon_rejected' => 'لا يمكن استخدام كود الخصم: :reason',
 ];

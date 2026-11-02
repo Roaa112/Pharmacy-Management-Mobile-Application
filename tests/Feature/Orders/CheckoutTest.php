@@ -175,7 +175,8 @@ class CheckoutTest extends TestCase
 
         // once_per_user: a second order does not get the discount again.
         $this->putInCart($this->user, $this->makeSize(price: 100), 1);
-        $this->assertEquals(100, $this->checkout(['coupon_code' => 'SAVE10'])->assertCreated()->json('total_price'));
+        $this->checkout(['coupon_code' => 'SAVE10'])->assertStatus(422)->assertJsonPath('code', 'coupon_rejected');
+        $this->assertEquals(100, $this->checkout()->assertCreated()->json('total_price'));
         $this->assertSame(1, $coupon->fresh()->used_count);
     }
 
@@ -184,7 +185,8 @@ class CheckoutTest extends TestCase
         $coupon = Coupon::create(['code' => 'ONE', 'discount_value' => 50, 'is_active' => true, 'usage_limit' => 1, 'used_count' => 1]);
         $this->putInCart($this->user, $this->makeSize(price: 100), 1);
 
-        $this->assertEquals(100, $this->checkout(['coupon_code' => 'ONE'])->assertCreated()->json('total_price'));
+        // Used up: refused, never silently ignored (the customer would pay more than expected).
+        $this->checkout(['coupon_code' => 'ONE'])->assertStatus(422)->assertJsonPath('code', 'coupon_rejected')->assertJsonPath('reason', 'used_up');
 
         $this->assertSame(1, $coupon->fresh()->used_count);
     }

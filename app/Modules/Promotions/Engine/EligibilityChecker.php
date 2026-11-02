@@ -6,8 +6,8 @@ use App\Models\Coupon;
 use App\Models\CouponRedemption;
 use App\Models\DiscountRule;
 use App\Models\FlashSale;
+use App\Models\FlashSaleRedemption;
 use App\Models\Order;
-use App\Models\OrderItem;
 use App\Models\PromotionRedemption;
 use App\Models\User;
 use App\Support\Money as BaseMoney;
@@ -94,20 +94,21 @@ class EligibilityChecker
     }
 
     /**
-     * Units already sold at this flash sale's price (orders not canceled), optionally for one
-     * customer, product or variant.
+     * Units already sold at this flash sale's price (lines of orders not canceled), optionally for
+     * one customer, product or variant. At checkout the count is a locking read: under MySQL's
+     * REPEATABLE READ a plain read would see the snapshot taken before the sale row was locked and
+     * miss units sold by checkouts that committed meanwhile (limits were exceeded that way).
      */
     public function flashSold(FlashSale $sale, PricingInput $input, ?int $userId = null, ?int $productId = null, ?int $sizeId = null): int
     {
-        return $this->memo("flash:{$sale->id}:{$userId}:{$productId}:{$sizeId}", $input, fn () => (int) OrderItem::query()
-            ->join('orders', 'orders.id', '=', 'order_items.order_id')
-            ->where('order_items.flash_sale_id', $sale->id)
-            ->where('order_items.is_gift', false)
-            ->where('orders.status', '!=', 'canceled')
-            ->when($userId, fn ($q) => $q->where('orders.user_id', $userId))
-            ->when($productId, fn ($q) => $q->where('order_items.product_id', $productId))
-            ->when($sizeId, fn ($q) => $q->where('order_items.product_size_id', $sizeId))
-            ->sum('order_items.quantity'));
+        return $this->memo("flash:{$sale->id}:{$userId}:{$productId}:{$sizeId}", $input, fn () => (int) FlashSaleRedemption::query()
+            ->where('flash_sale_id', $sale->id)
+            ->whereIn('status', FlashSaleRedemption::COUNTING)
+            ->when($userId, fn ($q) => $q->where('user_id', $userId))
+            ->when($productId, fn ($q) => $q->where('product_id', $productId))
+            ->when($sizeId, fn ($q) => $q->where('product_size_id', $sizeId))
+            ->when($input->forCheckout, fn ($q) => $q->lockForUpdate())
+            ->sum('quantity'));
     }
 
     /** Why this customer cannot use the coupon, or null. Amount checks happen in CouponStrategy. */
@@ -159,11 +160,13 @@ class EligibilityChecker
         return $this->memo("orders:{$user->id}", $input, fn () => Order::where('user_id', $user->id)->where('status', '!=', 'canceled')->exists());
     }
 
+    /** Uses of a promotion; a locking read at checkout (see flashSold() for why). */
     private function promotionUses(int $promotionId, ?int $userId, PricingInput $input): int
     {
         return $this->memo("promo:{$promotionId}:{$userId}", $input, fn () => PromotionRedemption::where('discount_rule_id', $promotionId)
             ->whereIn('status', PromotionRedemption::COUNTING)
             ->when($userId, fn ($q) => $q->where('user_id', $userId))
+            ->when($input->forCheckout, fn ($q) => $q->lockForUpdate())
             ->count());
     }
 

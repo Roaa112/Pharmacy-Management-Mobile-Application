@@ -91,6 +91,19 @@ trait BuildsShop
         return $order;
     }
 
+    /** The cash of an order built with makeOrder() was collected (checkout creates the payment itself). */
+    protected function payInCash(Order $order): \App\Models\Payment
+    {
+        $payment = \App\Models\Payment::create([
+            'order_id' => $order->id, 'provider' => \App\Models\Payment::PROVIDER_COD, 'internal_reference' => 'PAY-T'.$order->id,
+            'amount' => $order->total_price, 'status' => 'paid', 'collection_status' => 'collected',
+            'collected_amount' => $order->total_price, 'paid_at' => now(),
+        ]);
+        app(\App\Modules\Payments\Services\PaymentService::class)->projectOrder($order->id);
+
+        return $payment;
+    }
+
     /**
      * An order paid by ZainCash before ZainCash was retired, shaped like the migrated history:
      * the order keeps payment_method "zaincash" and its receipt; its payment is a legacy

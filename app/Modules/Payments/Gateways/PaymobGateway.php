@@ -98,9 +98,67 @@ class PaymobGateway implements PaymentGateway
         return $this->notificationFrom((array) $response->json(), true);
     }
 
+    /** Can we ask Paymob about a payment (inquiry needs the API key)? */
+    public function canInquire(): bool
+    {
+        return !blank($this->credential('api_key')) && !blank(config('services.paymob.base_url'));
+    }
+
+    /**
+     * The transaction of a Paymob order, for payments whose transaction id never reached us (the
+     * webhook was lost or its processing died). Paymob "transaction inquiry" by order id
+     * (POST /api/ecommerce/orders/transaction_inquiry). null = Paymob has no transaction for the order.
+     *
+     * @throws PaymentGatewayException when Paymob cannot answer (the outcome stays unknown)
+     */
+    public function fetchOrderTransaction(string $providerOrderId): ?GatewayNotification
+    {
+        if (!$this->canInquire()) {
+            throw new PaymentGatewayException('Paymob inquiry needs the API key.');
+        }
+
+        $token = $this->authToken();
+
+        try {
+            $response = $this->http()->withToken($token)->post('/api/ecommerce/orders/transaction_inquiry', ['auth_token' => $token, 'order_id' => $providerOrderId]);
+        } catch (ConnectionException) {
+            throw new PaymentGatewayException('Paymob could not be reached.');
+        }
+
+        if ($response->status() === 404) {
+            return null;
+        }
+        if (!$response->successful()) {
+            throw new PaymentGatewayException("Paymob answered HTTP {$response->status()}.");
+        }
+
+        $data = (array) $response->json();
+
+        return isset($data['id']) ? $this->notificationFrom($data, true) : null;
+    }
+
+    /**
+     * Rebuild a notification from the audit payload stored with its event (payment_events.payload),
+     * to re-apply an event whose processing failed or died. Its signature was verified when it
+     * arrived; apply() still confirms it with Paymob's API when verify_with_api is on.
+     */
+    public function notificationFromStored(array $payload): GatewayNotification
+    {
+        $transaction = Arr::except($payload, ['order_id', 'merchant_order_id', 'source_type', 'message', 'data_is_refund']);
+        $transaction['order'] = ['id' => $payload['order_id'] ?? null, 'merchant_order_id' => $payload['merchant_order_id'] ?? null];
+        $transaction['data'] = array_filter(['message' => $payload['message'] ?? null, 'is_refund' => $payload['data_is_refund'] ?? null], fn ($v) => $v !== null);
+
+        return $this->notificationFrom($transaction, true);
+    }
+
     public function refund(Payment $payment, int $amountMinor): GatewayRefundResult
     {
-        $this->assertConfigured();
+        // Configuration and authentication problems happen before anything is sent: a plain failure.
+        try {
+            $this->assertConfigured();
+        } catch (PaymentGatewayException $e) {
+            return new GatewayRefundResult(false, error: $e->getMessage());
+        }
 
         if (blank($payment->provider_transaction_id)) {
             return new GatewayRefundResult(false, error: 'The payment has no Paymob transaction to refund.');
@@ -110,15 +168,28 @@ class PaymobGateway implements PaymentGateway
         $request = $this->http();
 
         if ($this->flow() === 'legacy') {
-            $body['auth_token'] = $this->authToken();
+            try {
+                $body['auth_token'] = $this->authToken();
+            } catch (PaymentGatewayException $e) {
+                return new GatewayRefundResult(false, error: $e->getMessage());
+            }
         } else {
             $request = $request->withHeaders(['Authorization' => 'Token '.$this->credential('secret_key')]);
         }
 
+        // Paymob documents no idempotency key for refunds, so an unanswered request is reported as
+        // uncertain and reconciled against the transaction's refunded amount before any retry.
         try {
-            $response = $this->send(fn () => $request->post('/api/acceptance/void_refund/refund', $body));
-        } catch (PaymentGatewayException $e) {
-            return new GatewayRefundResult(false, error: $e->getMessage());
+            $response = $request->post('/api/acceptance/void_refund/refund', $body);
+        } catch (ConnectionException) {
+            return new GatewayRefundResult(false, error: 'No answer from Paymob: the refund may or may not have been made.', uncertain: true);
+        }
+
+        if ($response->serverError()) {
+            return new GatewayRefundResult(false, error: "Paymob answered HTTP {$response->status()}: the refund may or may not have been made.", uncertain: true);
+        }
+        if (!$response->successful()) {
+            return new GatewayRefundResult(false, error: "Paymob answered HTTP {$response->status()}.");
         }
 
         $data = (array) $response->json();
@@ -258,11 +329,14 @@ class PaymobGateway implements PaymentGateway
             failureReason: $outcome === GatewayNotification::FAILED
                 ? (string) (Arr::get($transaction, 'data.message') ?? Arr::get($transaction, 'data.txn_response_code') ?? 'Declined')
                 : null,
-            // Keep what is needed to audit the decision; never card or billing details.
+            // Keep what is needed to audit the decision (and to re-apply it, notificationFromStored()); never card or billing details.
             raw: Arr::only($transaction, ['id', 'success', 'pending', 'amount_cents', 'currency', 'created_at', 'is_refunded', 'is_voided',
-                'has_parent_transaction', 'parent_transaction', 'integration_id', 'error_occured', 'is_3d_secure'])
+                'has_parent_transaction', 'parent_transaction', 'integration_id', 'error_occured', 'is_3d_secure', 'is_refund',
+                'refunded_amount_cents', 'special_reference'])
                 + ['order_id' => Arr::get($transaction, 'order.id'), 'merchant_order_id' => Arr::get($transaction, 'order.merchant_order_id'),
-                    'source_type' => Arr::get($transaction, 'source_data.type'), 'message' => Arr::get($transaction, 'data.message')],
+                    'source_type' => Arr::get($transaction, 'source_data.type'), 'message' => Arr::get($transaction, 'data.message'),
+                    'data_is_refund' => Arr::get($transaction, 'data.is_refund')],
+            refundedAmountProviderUnits: isset($transaction['refunded_amount_cents']) ? (int) $transaction['refunded_amount_cents'] : null,
         );
     }
 

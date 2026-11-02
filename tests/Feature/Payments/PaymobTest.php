@@ -37,6 +37,8 @@ class PaymobTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Every Paymob call must hit a fake: an unmatched request would reach the real API.
+        Http::preventStrayRequests();
         $this->configurePaymob();
         PaymentMethod::where('code', 'paymob')->update(['is_active' => true]);
         $this->user = User::factory()->create(['email' => 'buyer@example.com', 'phone' => '01000000000']);
@@ -353,7 +355,10 @@ class PaymobTest extends TestCase
         $agent->forceFill(['role' => 'orders_agent'])->save();
         $this->actingAs($agent, 'admin')->post(route('dashboard.refunds.process', $refund))->assertForbidden();
 
-        $this->actingAs($this->admin, 'admin')->post(route('dashboard.refunds.process', $refund))->assertSessionHas('success');
+        // Separation of duties: the admin who canceled the order (and so requested the refund) cannot pay it out.
+        $this->actingAs($this->admin, 'admin')->post(route('dashboard.refunds.process', $refund))->assertSessionHas('error');
+        $cashier = Admin::create(['name' => 'Cashier', 'email' => 'cashier@example.com', 'password' => 'secret-password']);
+        $this->actingAs($cashier, 'admin')->post(route('dashboard.refunds.process', $refund))->assertSessionHas('success');
         $this->assertSame(['succeeded', '9100'], [$refund->fresh()->status, $refund->fresh()->provider_refund_id]);
         $this->assertSame('refunded', $payment->fresh()->status->value);
         $this->assertSame(['refunded', 'full'], [$order->fresh()->payment_status, $order->fresh()->refund_status]);
@@ -361,7 +366,7 @@ class PaymobTest extends TestCase
             && $r->header('Authorization')[0] === 'Token test-secret');
 
         // A second processing attempt changes nothing.
-        $this->actingAs($this->admin, 'admin')->post(route('dashboard.refunds.process', $refund))->assertSessionHas('error');
+        $this->actingAs($cashier, 'admin')->post(route('dashboard.refunds.process', $refund))->assertSessionHas('error');
     }
 
     public function test_a_refund_made_in_the_paymob_dashboard_is_recorded_from_its_callback(): void
@@ -382,7 +387,8 @@ class PaymobTest extends TestCase
 
     public function test_an_unpaid_online_order_expires_and_releases_its_stock(): void
     {
-        $this->fakePaymob();
+        // Paymob confirms the order has no transaction before anything expires.
+        $this->fakePaymob(['*/api/ecommerce/orders/transaction_inquiry' => Http::response(['message' => 'not found'], 404)]);
         $order = $this->checkoutWithPaymob(stock: 3);
         $size = $order->items()->first()->size;
         $this->assertSame(2, $size->fresh()->stock);

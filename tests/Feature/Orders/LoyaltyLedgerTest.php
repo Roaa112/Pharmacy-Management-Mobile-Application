@@ -46,7 +46,8 @@ class LoyaltyLedgerTest extends TestCase
     public function test_every_points_movement_is_in_the_ledger_and_api_matches_dashboard(): void
     {
         $order = $this->checkout(100); // 10 points
-        $order->forceFill(['status' => 'completed'])->save();
+        // Completed through the workflow: the units are dispatched and the cash recorded (refunds need received money).
+        app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($order, \App\Enums\OrderStatus::Completed, 'admin', $this->admin->id);
         $this->assertSame([['earn', 10]], $this->ledger($order));
 
         // A 30 % refund reverses 3 points.
@@ -82,7 +83,9 @@ class LoyaltyLedgerTest extends TestCase
         $this->assertSame('paid', $order->fresh()->payment_status);
         $this->assertSame(0, $this->getJson('/api/user/points/valid')->json('valid_points_total'));
 
-        app(\App\Modules\Payments\Services\RefundService::class)->process($refund, $this->admin->id, 'Cash voucher 17');
+        // Separation of duties: the admin who accepted the return cannot pay it out.
+        $cashier = Admin::create(['name' => 'C', 'email' => 'c@example.com', 'password' => 'secret-password']);
+        app(\App\Modules\Payments\Services\RefundService::class)->process($refund, $cashier->id, 'Cash voucher 17');
 
         $this->assertSame('refunded', $order->fresh()->payment_status);
         $this->assertSame('full', $order->fresh()->refund_status);

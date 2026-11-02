@@ -327,6 +327,7 @@ class ReturnQuarantineAndPointsTest extends TestCase
         $orderId = $this->postJson('/api/user/orders', ['address_id' => $address->id, 'payment_method' => 'cash'])->assertCreated()->json('order_id');
         $order = Order::find($orderId);
         $this->assertSame(100, (int) $order->points_earned);
+        app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($order, \App\Enums\OrderStatus::Completed, 'system');
 
         // Refunding the products' share (100.00) reverses everything; 25.00 reverses 25.
         $this->accept($this->requestReturn($order, 25));
@@ -345,6 +346,7 @@ class ReturnQuarantineAndPointsTest extends TestCase
         $orderId = $this->postJson('/api/user/orders', ['address_id' => -1, 'payment_method' => 'cash', 'coupon_code' => 'TEN'])
             ->assertCreated()->assertJsonPath('total_price', 90)->json('order_id');
         $order = Order::find($orderId);
+        app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($order, \App\Enums\OrderStatus::Completed, 'system');
 
         // Half of what was paid → half the points.
         $this->accept($this->requestReturn($order, 45));

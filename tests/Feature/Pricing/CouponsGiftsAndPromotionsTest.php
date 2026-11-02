@@ -106,7 +106,8 @@ class CouponsGiftsAndPromotionsTest extends TestCase
 
         $this->putInCart($this->user, $size, 1);
         $this->postJson('/api/user/cart/apply-coupon', ['coupon' => $coupon->code])->assertStatus(400)->assertJsonPath('code', 'already_used');
-        $this->postJson('/api/user/orders', ['address_id' => -1, 'payment_method' => 'cash', 'coupon_code' => $coupon->code])->assertJsonPath('discount', 0);
+        $this->postJson('/api/user/orders', ['address_id' => -1, 'payment_method' => 'cash', 'coupon_code' => $coupon->code])
+            ->assertStatus(422)->assertJsonPath('code', 'coupon_rejected')->assertJsonPath('reason', 'already_used');
     }
 
     public function test_flash_sale_end_time_and_one_hour_default(): void

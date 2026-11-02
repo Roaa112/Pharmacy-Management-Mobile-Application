@@ -4,6 +4,8 @@ namespace App\Modules\Promotions\Services;
 
 use App\Models\Coupon;
 use App\Models\CouponRedemption;
+use App\Models\FlashSaleRedemption;
+use App\Models\OrderItem;
 use App\Models\Order;
 use App\Models\PromotionRedemption;
 use App\Models\Setting;
@@ -20,6 +22,9 @@ use Illuminate\Support\Facades\DB;
  *  - consumed  when the order completes;
  *  - released  when the order is canceled: the use goes back (coupons: when
  *              settings.coupon_release_on_cancel, the default — decision D5).
+ *
+ * Flash-sale units follow the same lifecycle (flash_sale_redemptions, one row per flash-priced line).
+ * All rows are written inside the checkout transaction: a checkout that fails rolls them back.
  *
  * Refunds and returns after delivery do not give a use back: the order happened.
  * coupons.used_count moves with the redemptions (+1 reserved, −1 released). It is the global
@@ -47,6 +52,13 @@ class PromotionLifecycle
             );
         }
 
+        OrderItem::where('order_id', $order->id)->whereNotNull('flash_sale_id')->where('is_gift', false)->get()
+            ->each(fn (OrderItem $line) => FlashSaleRedemption::firstOrCreate(
+                ['order_item_id' => $line->id],
+                ['flash_sale_id' => $line->flash_sale_id, 'order_id' => $order->id, 'user_id' => $order->user_id, 'product_id' => $line->product_id,
+                    'product_size_id' => $line->product_size_id, 'quantity' => $line->quantity, 'status' => FlashSaleRedemption::RESERVED],
+            ));
+
         if ($result->coupon) {
             CouponRedemption::firstOrCreate(
                 ['order_id' => $order->id],
@@ -70,6 +82,9 @@ class PromotionLifecycle
         PromotionRedemption::where('order_id', $order->id)->where('status', PromotionRedemption::RESERVED)
             ->update(['status' => PromotionRedemption::CONSUMED, 'consumed_at' => now()]);
 
+        FlashSaleRedemption::where('order_id', $order->id)->where('status', FlashSaleRedemption::RESERVED)
+            ->update(['status' => FlashSaleRedemption::CONSUMED, 'consumed_at' => now()]);
+
         CouponRedemption::where('order_id', $order->id)->where('status', CouponRedemption::RESERVED)
             ->update(['status' => CouponRedemption::CONSUMED, 'consumed_at' => now()]);
     }
@@ -78,6 +93,9 @@ class PromotionLifecycle
     {
         PromotionRedemption::where('order_id', $order->id)->whereIn('status', PromotionRedemption::COUNTING)
             ->update(['status' => PromotionRedemption::RELEASED, 'released_at' => now()]);
+
+        FlashSaleRedemption::where('order_id', $order->id)->whereIn('status', FlashSaleRedemption::COUNTING)
+            ->update(['status' => FlashSaleRedemption::RELEASED, 'released_at' => now()]);
 
         if (!(Setting::current()->coupon_release_on_cancel ?? true)) {
             return;

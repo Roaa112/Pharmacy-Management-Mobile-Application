@@ -14,6 +14,7 @@ use App\Models\PaymentMethod;
 use App\Models\ProductSize;
 use App\Models\Setting;
 use App\Models\User;
+use App\Modules\Inventory\Services\InsufficientStock;
 use App\Modules\Inventory\Services\InventoryService;
 use App\Models\Payment;
 use App\Modules\Payments\Services\PaymentService;
@@ -63,7 +64,16 @@ class CheckoutService
             return response()->json(['message' => api_trans('payments.unavailable'), 'code' => 'payment_unavailable'], 422);
         }
 
-        $result = DB::transaction(fn () => $this->placeOrder($user, $input, $paymentMethod, $address, $receiptPath));
+        try {
+            // Deadlock retries are safe: nothing outside the database happens inside placeOrder().
+            $result = DB::transaction(fn () => $this->placeOrder($user, $input, $paymentMethod, $address, $receiptPath), 3);
+        } catch (InsufficientStock $e) {
+            // A reservation found fewer units than the pre-check (stock moved between warehouses, or
+            // a projection behind the ledger): the same answer as the pre-check, nothing was ordered.
+            $result = response()->json(['message' => api_trans('orders.out_of_stock_lines'), 'code' => 'out_of_stock',
+                'errors' => [['product' => $e->size?->product?->name ?? api_trans('orders.unknown_product'), 'size' => $e->size?->size ?? '-',
+                    'message' => api_trans('orders.line_insufficient', ['available' => max(0, $e->available)])]]], 422);
+        }
 
         if ($result->getStatusCode() !== 201 && $receiptPath) {
             Storage::disk('local')->delete($receiptPath);
@@ -127,6 +137,15 @@ class CheckoutService
 
         if (isset($input['expected_total']) && Money::toMinor($input['expected_total']) !== $result->total()) {
             return response()->json(['message' => api_trans('promotions.pricing_changed'), 'code' => 'pricing_changed', 'pricing' => $result->toArray()], 409);
+        }
+
+        // A coupon the customer entered must apply, or nothing is ordered: never charge more than the
+        // customer expects by dropping it silently (a better automatic offer is the one exception).
+        if (filled($couponCode) && !$result->coupon && ($result->couponRejection['reason'] ?? null) !== 'conflict_better_offer') {
+            $reason = $result->couponRejection['message'] ?? api_trans('promotions.reasons.invalid');
+
+            return response()->json(['message' => api_trans('orders.coupon_rejected', ['reason' => $reason]), 'code' => 'coupon_rejected',
+                'reason' => $result->couponRejection['reason'] ?? 'invalid', 'pricing' => $result->toArray()], 422);
         }
 
         $subtotalMinor = $result->subtotal;

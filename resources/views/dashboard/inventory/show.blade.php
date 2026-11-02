@@ -45,11 +45,31 @@
             </table>
         </div>
 
+        <div class="card mb-3">
+            <div class="card-header"><h3 class="card-title">Batches</h3><div class="card-actions small text-secondary">first expiry first out</div></div>
+            <div class="table-responsive">
+                <table class="table card-table table-vcenter">
+                    <thead><tr><th>Lot · expiry</th><th>WH</th><th class="text-end">On hand</th><th class="text-end">Reserved</th><th class="text-end">Other</th></tr></thead>
+                    @forelse ($batches as $b)
+                        <tr class="{{ $b->batch->isExpired() ? 'table-danger' : (!$b->batch->isSellable() ? 'table-warning' : '') }}">
+                            <td>{{ $b->batch->label() }}@if ($b->batch->isExpired()) <span class="badge bg-red-lt">expired</span>@elseif (!$b->batch->isSellable()) <span class="badge bg-yellow-lt">not sold</span>@endif</td>
+                            <td>{{ $b->warehouse->code }}</td>
+                            <td class="text-end">{{ $b->on_hand }}</td>
+                            <td class="text-end">{{ $b->reserved }}</td>
+                            <td class="text-end small text-secondary">{{ $b->damaged }} dmg · {{ $b->quarantined }} qtn · {{ $b->in_transit }} transit</td>
+                        </tr>
+                    @empty
+                        <tr><td colspan="5" class="text-secondary">No stock recorded.</td></tr>
+                    @endforelse
+                </table>
+            </div>
+        </div>
+
         <div class="card">
             <div class="card-header"><h3 class="card-title">Held for orders</h3></div>
             <div class="list-group list-group-flush">
                 @forelse ($reservations as $r)
-                    <a href="{{ route('dashboard.orders.show', $r->orderItem->order_id) }}" class="list-group-item d-flex justify-content-between"><span>Order #{{ $r->orderItem->order_id }}</span><span>{{ $r->quantity }} · {{ $r->warehouse->code }}</span></a>
+                    <a href="{{ route('dashboard.orders.show', $r->orderItem->order_id) }}" class="list-group-item d-flex justify-content-between"><span>Order #{{ $r->orderItem->order_id }}</span><span>{{ $r->quantity }} · {{ $r->warehouse->code }}@if ($r->batch) · {{ $r->batch->label() }}@endif</span></a>
                 @empty
                     <div class="list-group-item text-secondary">No active reservations.</div>
                 @endforelse
@@ -93,6 +113,8 @@
             </select></div>
         <div class="mb-3"><label class="form-label required" for="wh">Warehouse</label>
             <select id="wh" name="warehouse_id" class="form-select" required>@foreach ($warehouses as $w)<option value="{{ $w->id }}">{{ $w->code }} — {{ $w->name }}</option>@endforeach</select></div>
+        <div class="mb-3"><label class="form-label" for="batch">Batch</label>
+            <select id="batch" name="batch_id" class="form-select"><option value="">Automatic (first expiry first out; units added: unknown lot)</option>@foreach ($batchOptions as $option)<option value="{{ $option->id }}">{{ $option->label() }}</option>@endforeach</select></div>
         <x-admin.input name="quantity" type="number" label="Quantity" hint="Adjust: negative to remove. Damage / write-off: units." />
         <div class="row">
             <div class="col-4"><x-admin.input name="restock" type="number" min="0" label="Back on sale" hint="Inspect only" /></div>

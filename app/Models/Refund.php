@@ -16,6 +16,13 @@ class Refund extends Model
     public const SUCCEEDED = 'succeeded';
     public const FAILED = 'failed';
     public const CANCELED = 'canceled';
+    /** Sent to the provider without a usable answer: it may or may not have been paid out. Reconciled, never retried blindly. */
+    public const UNKNOWN = 'unknown';
+
+    /** Counted against what is left to refund on the payment. */
+    public const OPEN = [self::PENDING, self::PROCESSING, self::UNKNOWN];
+    /** Possibly already paid out by the provider. */
+    public const IN_FLIGHT = [self::PROCESSING, self::UNKNOWN];
 
     public const METHOD_GATEWAY = 'gateway';
     public const METHOD_CASH = 'cash';

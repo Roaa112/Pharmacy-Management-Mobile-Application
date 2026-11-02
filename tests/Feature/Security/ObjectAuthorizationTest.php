@@ -141,7 +141,7 @@ class ObjectAuthorizationTest extends TestCase
 
     public function test_return_refund_cannot_exceed_order_total(): void
     {
-        $order = $this->makeOrder($this->attacker, $this->makeSize(price: 100));
+        $order = $this->makeOrder($this->attacker, $this->makeSize(price: 100), status: 'completed');
 
         $this->postJson('/api/user/returns', ['order_id' => $order->id, 'reason' => 'damaged', 'refund_amount' => 1000])
             ->assertStatus(422);

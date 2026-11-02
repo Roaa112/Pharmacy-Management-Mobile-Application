@@ -29,6 +29,16 @@
         </div>
     </div>
     <div class="col-lg-6">
+        @if ($refund->status === 'unknown')
+            <div class="card mb-3 border-warning">
+                <div class="card-header"><h3 class="card-title">Outcome unknown</h3></div>
+                <form method="POST" action="{{ route('dashboard.refunds.reconcile', $refund) }}" class="card-body">
+                    @csrf
+                    <p class="text-muted">The provider did not answer when this refund was sent: it may already be paid out. It cannot be sent again until the provider's records are checked.</p>
+                    <button class="btn btn-warning">Check with the provider</button>
+                </form>
+            </div>
+        @endif
         @if (in_array($refund->status, ['pending', 'failed'], true))
             <div class="card mb-3">
                 <div class="card-header"><h3 class="card-title">Pay back</h3></div>

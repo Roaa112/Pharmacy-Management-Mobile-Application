@@ -32,6 +32,12 @@ class PaymentWebhookController extends Controller
             return response()->json(['status' => 'error'], 500);
         }
 
+        // Another worker is applying this very notification: ask the provider to retry later (if that
+        // worker dies, the retry or payments:recover-events claims the event again).
+        if ($event->getAttribute('was_duplicate') && $event->isInProgress()) {
+            return response()->json(['status' => 'in_progress'], 503)->header('Retry-After', '60');
+        }
+
         if ($event->result === PaymentEvent::RESULT_REJECTED && !$event->signature_valid) {
             return response()->json(['status' => 'invalid_signature'], 400);
         }

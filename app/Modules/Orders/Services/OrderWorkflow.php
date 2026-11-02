@@ -22,6 +22,9 @@ use Illuminate\Support\Facades\DB;
  * The only code that changes an order's status. Dashboard actions, customer cancellation and
  * shipment events (OrderFulfilment) all come through here, so the side effects of a transition
  * (stock back on cancel, timestamps, payment status, history) happen exactly once.
+ *
+ * Lock order (every path that changes an order follows it): order -> product sizes -> stock rows
+ * -> shipments -> payments -> refunds. Holding the order row first serializes all work on one order.
  */
 class OrderWorkflow
 {
@@ -91,7 +94,7 @@ class OrderWorkflow
             ]);
 
             return $order;
-        });
+        }, 3); // deadlock retries (only when this is the outermost transaction)
     }
 
     /**

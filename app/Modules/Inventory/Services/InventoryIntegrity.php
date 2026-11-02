@@ -2,6 +2,7 @@
 
 namespace App\Modules\Inventory\Services;
 
+use App\Models\InventoryBatch;
 use App\Models\StockReservation;
 use App\Models\Warehouse;
 use Illuminate\Support\Facades\DB;
@@ -11,7 +12,9 @@ use Illuminate\Support\Facades\DB;
  *  1. every balance bucket equals the sum of its ledger rows (warehouse rows only);
  *  2. reserved equals the active reservations of that SKU in that warehouse;
  *  3. no bucket is negative and reserved <= on_hand;
- *  4. product_sizes.stock / quarantined_stock equal the balances they project.
+ *  4. product_sizes.stock / quarantined_stock equal the balances they project (stock: unreserved
+ *     units of sellable batches in sellable warehouses);
+ *  5. the batch balances of every warehouse, SKU and bucket add up to its balance, none negative.
  */
 class InventoryIntegrity
 {
@@ -51,21 +54,39 @@ class InventoryIntegrity
             }
         }
 
-        $sellable = Warehouse::sellable()->pluck('id');
-        $projections = DB::table('product_sizes')
-            ->leftJoin('inventory_balances', 'inventory_balances.product_size_id', '=', 'product_sizes.id')
-            ->groupBy('product_sizes.id', 'product_sizes.stock', 'product_sizes.quarantined_stock')
-            ->selectRaw('product_sizes.id, product_sizes.stock, product_sizes.quarantined_stock, '
-                .'COALESCE(SUM(CASE WHEN inventory_balances.warehouse_id IN ('.($sellable->implode(',') ?: '0').') THEN inventory_balances.on_hand - inventory_balances.reserved ELSE 0 END), 0) as sellable, '
-                .'COALESCE(SUM(inventory_balances.quarantined), 0) as quarantined')
-            ->get();
+        $batchTotals = DB::table('batch_balances')->groupBy('warehouse_id', 'product_size_id')
+            ->selectRaw('warehouse_id, product_size_id, SUM(on_hand) as on_hand, SUM(reserved) as reserved, SUM(damaged) as damaged, SUM(quarantined) as quarantined, SUM(in_transit) as in_transit')
+            ->get()->keyBy(fn ($row) => "{$row->warehouse_id}:{$row->product_size_id}");
 
-        foreach ($projections as $row) {
-            if ((int) $row->stock !== (int) $row->sellable) {
-                $problems[] = "SKU {$row->id}: product_sizes.stock is {$row->stock}, sellable balances total {$row->sellable}.";
+        foreach (DB::table('inventory_balances')->orderBy('id')->cursor() as $balance) {
+            $key = "{$balance->warehouse_id}:{$balance->product_size_id}";
+            $batches = $batchTotals[$key] ?? null;
+            foreach (['on_hand', 'reserved', 'damaged', 'quarantined', 'in_transit'] as $bucket) {
+                if ((int) $balance->{$bucket} !== (int) ($batches->{$bucket} ?? 0)) {
+                    $problems[] = "SKU {$balance->product_size_id} in warehouse {$balance->warehouse_id}: {$bucket} is {$balance->{$bucket}}, its batches total ".(int) ($batches->{$bucket} ?? 0).'.';
+                }
             }
-            if ((int) $row->quarantined_stock !== (int) $row->quarantined) {
-                $problems[] = "SKU {$row->id}: quarantined_stock is {$row->quarantined_stock}, balances total {$row->quarantined}.";
+        }
+
+        if ($bad = DB::table('batch_balances')->where(fn ($q) => $q->where('on_hand', '<', 0)->orWhere('reserved', '<', 0)->orWhere('damaged', '<', 0)
+            ->orWhere('quarantined', '<', 0)->orWhere('in_transit', '<', 0)->orWhereColumn('reserved', '>', 'on_hand'))->count()) {
+            $problems[] = "{$bad} batch balance(s) are negative or reserve more than they hold.";
+        }
+
+        $sellableWarehouses = Warehouse::sellable()->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $sellableBatches = InventoryBatch::sellable()->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $sellableBySize = DB::table('batch_balances')->whereIn('warehouse_id', $sellableWarehouses ?: [0])->whereIn('inventory_batch_id', $sellableBatches ?: [0])
+            ->groupBy('product_size_id')->selectRaw('product_size_id, SUM(on_hand - reserved) as sellable')->pluck('sellable', 'product_size_id');
+        $quarantinedBySize = DB::table('inventory_balances')->groupBy('product_size_id')->selectRaw('product_size_id, SUM(quarantined) as quarantined')->pluck('quarantined', 'product_size_id');
+
+        foreach (DB::table('product_sizes')->orderBy('id')->get(['id', 'stock', 'quarantined_stock']) as $row) {
+            $sellable = (int) ($sellableBySize[$row->id] ?? 0);
+            $quarantined = (int) ($quarantinedBySize[$row->id] ?? 0);
+            if ((int) $row->stock !== $sellable) {
+                $problems[] = "SKU {$row->id}: product_sizes.stock is {$row->stock}, sellable batches total {$sellable}.";
+            }
+            if ((int) $row->quarantined_stock !== $quarantined) {
+                $problems[] = "SKU {$row->id}: quarantined_stock is {$row->quarantined_stock}, balances total {$quarantined}.";
             }
         }
 

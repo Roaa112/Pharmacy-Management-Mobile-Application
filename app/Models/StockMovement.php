@@ -39,6 +39,9 @@ class StockMovement extends Model
     public const TYPE_TRANSFER_IN = 'transfer_in';
     public const TYPE_TRANSFER_LOSS = 'transfer_loss';
     public const TYPE_SUPPLIER_RETURN = 'supplier_return';
+    // Batches: units of an expired batch taken off sale; a reservation moved to another batch.
+    public const TYPE_EXPIRY = 'expiry';
+    public const TYPE_BATCH_REALLOCATION = 'batch_reallocation';
     /** Legacy: stock taken off at checkout before reservations existed. */
     public const TYPE_SALE = 'sale';
 
@@ -48,7 +51,7 @@ class StockMovement extends Model
         self::TYPE_GIFT, self::TYPE_CANCELLATION, self::TYPE_CANCELLATION_RETURN, self::TYPE_SHIPMENT_RETURN,
         self::TYPE_RETURN_QUARANTINE, self::TYPE_RETURN_RESTOCK, self::TYPE_RETURN_DAMAGED, self::TYPE_DAMAGE,
         self::TYPE_WRITE_OFF, self::TYPE_TRANSFER_OUT, self::TYPE_TRANSFER_DISPATCH, self::TYPE_TRANSFER_IN,
-        self::TYPE_TRANSFER_LOSS, self::TYPE_SUPPLIER_RETURN, self::TYPE_SALE,
+        self::TYPE_TRANSFER_LOSS, self::TYPE_SUPPLIER_RETURN, self::TYPE_SALE, self::TYPE_EXPIRY, self::TYPE_BATCH_REALLOCATION,
     ];
 
     /** Legacy bucket names (rows before warehouses). */
@@ -79,6 +82,11 @@ class StockMovement extends Model
         // The ledger is history: no code path (or admin screen) may rewrite it.
         static::updating(fn () => throw new LogicException('Stock movements cannot be changed.'));
         static::deleting(fn () => throw new LogicException('Stock movements cannot be deleted.'));
+    }
+
+    public function batchLines()
+    {
+        return $this->hasMany(StockMovementBatch::class);
     }
 
     public function size()

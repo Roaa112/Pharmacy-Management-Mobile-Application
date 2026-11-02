@@ -90,14 +90,19 @@ class OrderPoliciesTest extends TestCase
         $order = $this->checkout();
         $request = fn () => $this->postJson('/api/user/returns', ['order_id' => $order->id, 'reason' => 'damaged', 'refund_amount' => 10]);
 
-        // No window configured: as before, a pending order can be returned.
+        // Nothing was dispatched yet: nothing can come back (cancel instead), window or not.
+        $request()->assertStatus(422)->assertJsonPath('code', 'order_not_delivered');
+
+        // No window configured: a dispatched order can be returned, as before.
+        app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($order, \App\Enums\OrderStatus::OnDelivery, 'system');
         $request()->assertCreated();
         ReturnRequest::query()->delete();
 
         Setting::current()->update(['return_window_days' => 7]);
         $request()->assertStatus(422)->assertJsonPath('code', 'order_not_completed');
 
-        $order->forceFill(['status' => 'completed', 'completed_at' => now()->subDays(3)])->save();
+        app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($order->fresh(), \App\Enums\OrderStatus::Completed, 'system');
+        $order->forceFill(['completed_at' => now()->subDays(3)])->save();
         $request()->assertCreated();
         ReturnRequest::query()->delete();
 
@@ -148,8 +153,18 @@ class OrderPoliciesTest extends TestCase
         $a = $this->makeOrder($this->user, $size, status: 'completed');
         $this->makeOrder($this->user, $size, status: 'completed');
         $this->makeOrder($this->user, $size, status: 'pending');
-        ReturnRequest::create(['user_id' => $this->user->id, 'order_id' => $a->id, 'reason' => 'x', 'refund_amount' => 30])->forceFill(['status' => 'accepted', 'approved_amount' => 25])->save();
+        $return = ReturnRequest::create(['user_id' => $this->user->id, 'order_id' => $a->id, 'reason' => 'x', 'refund_amount' => 30]);
+        $return->forceFill(['status' => 'accepted', 'approved_amount' => 25])->save();
 
+        // Approved but not paid back yet: revenue is unchanged (money only leaves with a succeeded refund).
+        $this->assertSame(200.0, \App\Modules\Reports\Revenue::net(Order::query()));
+
+        \App\Models\Refund::create(['reference' => 'RF-T1', 'order_id' => $a->id, 'return_request_id' => $return->id, 'amount' => 25,
+            'method' => 'cash', 'status' => 'succeeded']);
+        $this->assertSame(175.0, \App\Modules\Reports\Revenue::net(Order::query()));
+
+        // A canceled refund gives nothing back.
+        \App\Models\Refund::create(['reference' => 'RF-T2', 'order_id' => $a->id, 'amount' => 50, 'method' => 'cash', 'status' => 'canceled']);
         $this->assertSame(175.0, \App\Modules\Reports\Revenue::net(Order::query()));
     }
 

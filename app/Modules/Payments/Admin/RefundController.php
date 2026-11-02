@@ -69,6 +69,21 @@ class RefundController extends Controller
         });
     }
 
+    /** A refund with an unknown outcome: ask the provider whether it was paid out. */
+    public function reconcile(Refund $refund, RefundService $refunds)
+    {
+        ['refund' => $refund, 'outcome' => $outcome] = $refunds->reconcile($refund, auth('admin')->id());
+        AdminAuditLog::record('refund.reconcile', $refund, ['outcome' => $outcome, 'status' => $refund->status]);
+
+        return redirect()->back()->with(in_array($outcome, ['succeeded', 'failed'], true) ? 'success' : 'error', match ($outcome) {
+            'succeeded' => 'The provider confirms the refund was paid out.',
+            'failed' => 'The provider shows no refund for this request; it can be sent again.',
+            'not_unknown' => 'This refund does not need reconciling.',
+            'provider_unreachable' => 'The provider could not be reached; try again later.',
+            default => 'The provider\'s records do not settle this refund; check it in the provider dashboard.',
+        });
+    }
+
     public function cancel(Request $request, Refund $refund, RefundService $refunds)
     {
         $data = $request->validate(['reason' => 'required|string|max:250']);

@@ -155,6 +155,7 @@ Route::prefix('dashboard')->name('dashboard.')->group(function () {
         Route::get('refunds/{refund}', [RefundController::class, 'show'])->name('refunds.show');
         Route::post('payments/{payment}/refunds', [RefundController::class, 'store'])->name('refunds.store');
         Route::post('refunds/{refund}/process', [RefundController::class, 'process'])->name('refunds.process');
+        Route::post('refunds/{refund}/reconcile', [RefundController::class, 'reconcile'])->name('refunds.reconcile');
         Route::post('refunds/{refund}/cancel', [RefundController::class, 'cancel'])->name('refunds.cancel');
     });
 

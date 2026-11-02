@@ -17,7 +17,17 @@ class UpdateUserRequest extends FormRequest
             'phone' => "required|string|unique:users,phone,$this->userId",
             'isActive' => 'nullable|boolean',
             'isVerified' => 'nullable|boolean',
+            // Checked when sent; required for an email change once PASSWORD_CHANGE_REQUIRES_CURRENT is on.
+            'current_password' => [$this->emailChangeNeedsPassword() ? 'required' : 'nullable', 'string', 'current_password:sanctum'],
         ];
+    }
+
+    private function emailChangeNeedsPassword(): bool
+    {
+        $user = $this->user();
+
+        return config('auth.password_change_requires_current') && $user?->password
+            && $this->filled('email') && strcasecmp((string) $this->input('email'), (string) $user->email) !== 0;
     }
 
     public function prepareForValidation()

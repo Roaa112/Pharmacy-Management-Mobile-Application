@@ -15,7 +15,8 @@ use Illuminate\Support\Facades\DB;
  *  dispatch: source on_hand -q, destination in_transit +q;
  *  receive:  destination in_transit -r, on_hand +r (partial receipts allowed);
  *  close:    the dispatched units never received are written off from in_transit (discrepancy).
- * So on_hand(source) + in_transit + on_hand(destination) + lost stays constant.
+ * So on_hand(source) + in_transit + on_hand(destination) + lost stays constant, batch by batch:
+ * units leave the source first-expiry-first-out and travel and arrive in their batches.
  */
 class TransferService
 {
@@ -69,10 +70,12 @@ class TransferService
         return $this->locked($transfer, [StockTransfer::APPROVED], function (StockTransfer $transfer) use ($adminId) {
             foreach ($transfer->items()->orderBy('product_size_id')->get() as $item) {
                 $context = ['reference' => $item, 'admin_id' => $adminId, 'reason' => "{$transfer->reference} dispatched"];
-                $this->inventory->apply($item->product_size_id, $transfer->source_warehouse_id, ['on_hand' => -$item->quantity_requested],
+                $out = $this->inventory->apply($item->product_size_id, $transfer->source_warehouse_id, ['on_hand' => -$item->quantity_requested],
                     StockMovement::TYPE_TRANSFER_OUT, $context, "transfer-out:{$item->id}");
+                // The units travel in their batches (FEFO at the source): the same batches arrive.
+                $batches = $out->first()?->batchLines->mapWithKeys(fn ($line) => [$line->inventory_batch_id => -$line->quantity_change])->all() ?? [];
                 $this->inventory->apply($item->product_size_id, $transfer->destination_warehouse_id, ['in_transit' => $item->quantity_requested],
-                    StockMovement::TYPE_TRANSFER_DISPATCH, $context, "transfer-dispatch:{$item->id}");
+                    StockMovement::TYPE_TRANSFER_DISPATCH, $context + ($batches ? ['batches' => ['in_transit' => $batches]] : []), "transfer-dispatch:{$item->id}");
                 $item->update(['quantity_dispatched' => $item->quantity_requested]);
             }
 

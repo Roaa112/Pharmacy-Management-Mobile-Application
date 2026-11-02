@@ -27,6 +27,8 @@ class UserController extends Controller
     // Security limits: code, not dashboard settings.
     private const MAX_OTP_ATTEMPTS = 5;
     private const OTP_TTL_MINUTES = 10;
+    // New codes per account per hour, whatever the IP: each code allows MAX_OTP_ATTEMPTS guesses.
+    private const MAX_OTP_SENDS_PER_HOUR = 5;
 
     public function __construct(private UserService $userService)
     {
@@ -95,12 +97,17 @@ class UserController extends Controller
         return response()->json(['message' => 'If this account needs verifying, a code has been sent to it.']);
     }
 
-    /** A fresh 6-digit code, stored hashed, valid OTP_TTL_MINUTES. */
+    /** A fresh 6-digit code, stored hashed, valid OTP_TTL_MINUTES; at most MAX_OTP_SENDS_PER_HOUR per account. */
     private function sendOtp(User $user): void
     {
+        // Silently capped (the response never says whether a code was sent).
+        if (RateLimiter::tooManyAttempts('otp-send:'.$user->id, self::MAX_OTP_SENDS_PER_HOUR)) {
+            return;
+        }
+        RateLimiter::hit('otp-send:'.$user->id, 3600);
+
         $otp = (string) random_int(100000, 999999);
-        $user->forceFill(['otp_code' => Hash::make($otp), 'otp_expires_at' => now()->addMinutes(self::OTP_TTL_MINUTES)])->save();
-        RateLimiter::clear('otp-attempts:'.$user->id);
+        $user->forceFill(['otp_code' => Hash::make($otp), 'otp_expires_at' => now()->addMinutes(self::OTP_TTL_MINUTES), 'otp_attempts' => 0])->save();
 
         try {
             Mail::to($user->email)->send(new SendOtp($otp));
@@ -186,26 +193,36 @@ class UserController extends Controller
             return null;
         }
 
-        // Per-account cap, independent of IP: after 5 wrong codes the OTP is destroyed,
-        // so spreading guesses over many IPs cannot brute-force the 6 digits.
-        $attemptsKey = 'otp-attempts:' . $user->id;
+        // The attempt is counted BEFORE the code is compared, in one atomic conditional UPDATE: of any
+        // number of parallel requests, at most MAX_OTP_ATTEMPTS ever get to compare a guess, whatever
+        // the cache driver or the number of IPs used. After that the code is destroyed.
+        $counted = User::whereKey($user->id)->whereNotNull('otp_code')
+            ->where('otp_attempts', '<', self::MAX_OTP_ATTEMPTS)->increment('otp_attempts');
+
+        if ($counted !== 1) {
+            $user->forceFill(['otp_code' => null, 'otp_expires_at' => null])->save();
+
+            return null;
+        }
 
         if (!Hash::check($otp, $user->otp_code)) {
-            if (RateLimiter::hit($attemptsKey, 600) >= self::MAX_OTP_ATTEMPTS) {
+            if ($user->fresh()->otp_attempts >= self::MAX_OTP_ATTEMPTS) {
                 $user->forceFill(['otp_code' => null, 'otp_expires_at' => null])->save();
-                RateLimiter::clear($attemptsKey);
             }
 
             return null;
         }
 
-        RateLimiter::clear($attemptsKey);
+        // A correct code clears the count (as the cache counter did before), so the app's
+        // verify-otp -> reset/auth flow works whatever typos came first. Guessing is still capped:
+        // only a caller who already holds the right code gets here.
+        User::whereKey($user->id)->update(['otp_attempts' => 0]);
 
-        return $user;
+        return $user->fresh();
     }
-  
-  
-  
+
+
+
     public function logout(Request $request)
     {
         return $this->userService->logout($request);
@@ -257,7 +274,23 @@ class UserController extends Controller
             return errorJsonResponse('Forbidden', HttpStatusCodeEnum::Forbidden->value);
         }
 
+        $current = $request->user();
+        $emailChanged = strcasecmp((string) $request->validated('email'), (string) $current->email) !== 0;
+
         $user = $this->userService->updateUser($id, $request->validated());
+
+        if ($emailChanged) {
+            // A new address must be proven before it can receive password-reset codes on its own
+            // authority: the account is unverified again and a code goes to the new address. Other
+            // sessions are signed out (as for a password change), so a stolen token cannot quietly
+            // move the account to another mailbox while the owner stays signed in elsewhere.
+            $user = User::findOrFail($id);
+            $user->forceFill(['is_verified' => false])->save();
+            $currentToken = $current->currentAccessToken();
+            $user->tokens()->when($currentToken instanceof PersonalAccessToken, fn ($q) => $q->where('id', '!=', $currentToken->id))->delete();
+            $this->sendOtp($user);
+        }
+
         return successJsonResponse(new UserResource($user), __('user.success.update_user'));
     }
 

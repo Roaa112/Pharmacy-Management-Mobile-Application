@@ -90,16 +90,18 @@ class SupplierController extends Controller
             'method' => 'nullable|string|max:30',
             'reference' => 'nullable|string|max:64',
             'notes' => 'nullable|string|max:1000',
+            'request_key' => 'nullable|string|max:64',
         ]);
 
-        if ($data['supplier_invoice_id'] ?? null) {
-            $invoice = SupplierInvoice::withSum('payments', 'amount')->find($data['supplier_invoice_id']);
-            if (Money::toMinor($invoice->payments_sum_amount) + Money::toMinor($data['amount']) > Money::toMinor($invoice->amount)) {
-                return redirect()->back()->withInput()->with('error', 'The payment is larger than what is left on that invoice.');
-            }
+        try {
+            $payment = app(PurchasingService::class)->recordSupplierPayment($supplier, $data, auth('admin')->id());
+        } catch (DomainException $e) {
+            return redirect()->back()->withInput()->with('error', $e->getMessage());
         }
 
-        $payment = $supplier->payments()->create($data + ['created_by' => auth('admin')->id()]);
+        if (!$payment->wasRecentlyCreated) {
+            return redirect()->back()->with('success', 'Payment recorded.'); // the same form submitted again
+        }
         AdminAuditLog::record('supplier.payment', $payment, $payment->toArray());
 
         return redirect()->back()->with('success', 'Payment recorded.');

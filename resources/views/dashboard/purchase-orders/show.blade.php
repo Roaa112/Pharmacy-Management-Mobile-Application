@@ -25,7 +25,7 @@
             <div class="table-responsive">
                 <table class="table card-table table-vcenter">
                     <thead><tr><th>Product</th><th class="text-end">Ordered</th><th class="text-end">Received</th><th class="text-end">Damaged</th><th class="text-end">Outstanding</th><th class="text-end">Unit cost</th>
-                        @if ($order->canReceive())<th class="w-1">Receive good</th><th class="w-1">Damaged</th>@endif</tr></thead>
+                        @if ($order->canReceive())<th class="w-1">Receive good</th><th class="w-1">Damaged</th><th class="w-1">Lot</th><th class="w-1">Expiry</th>@endif</tr></thead>
                     @foreach ($order->items as $item)
                         <tr>
                             <td>{{ $item->size?->product?->name_en ?? '—' }} — {{ $item->size?->size }}<div class="small text-secondary">{{ $item->size?->sku }}</div></td>
@@ -37,6 +37,8 @@
                             @if ($order->canReceive())
                                 <td><input type="number" min="0" max="{{ $item->outstanding }}" name="lines[{{ $item->id }}][received]" class="form-control form-control-sm" style="width: 6rem" aria-label="Good units received"></td>
                                 <td><input type="number" min="0" max="{{ $item->outstanding }}" name="lines[{{ $item->id }}][damaged]" class="form-control form-control-sm" style="width: 5rem" aria-label="Damaged units received"></td>
+                                <td><input type="text" maxlength="64" name="lines[{{ $item->id }}][lot_number]" class="form-control form-control-sm" style="width: 7rem" aria-label="Lot number"></td>
+                                <td><input type="date" min="{{ \App\Support\StoreClock::now()->addDay()->toDateString() }}" name="lines[{{ $item->id }}][expiry_date]" class="form-control form-control-sm" aria-label="Expiry date"></td>
                             @endif
                         </tr>
                     @endforeach

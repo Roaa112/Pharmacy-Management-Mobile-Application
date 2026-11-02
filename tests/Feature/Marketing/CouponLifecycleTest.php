@@ -107,7 +107,9 @@ class CouponLifecycleTest extends TestCase
         Sanctum::actingAs($this->user);
         $this->checkout(['coupon_code' => $coupon->code])->assertCreated()->assertJsonPath('discount', 10);
         Sanctum::actingAs($other);
-        $this->checkout(['coupon_code' => $coupon->code])->assertCreated()->assertJsonPath('discount', 0)->assertJsonPath('total_price', 100);
+        // Used up meanwhile: refused (422), never silently charged at full price.
+        $this->checkout(['coupon_code' => $coupon->code])->assertStatus(422)->assertJsonPath('code', 'coupon_rejected')->assertJsonPath('reason', 'used_up');
+        $this->checkout()->assertCreated()->assertJsonPath('discount', 0)->assertJsonPath('total_price', 100);
 
         $this->assertSame(1, CouponRedemption::where('coupon_id', $coupon->id)->whereIn('status', CouponRedemption::COUNTING)->count());
         $this->assertSame(1, $coupon->fresh()->used_count);
@@ -137,7 +139,7 @@ class CouponLifecycleTest extends TestCase
 
         $off = $this->couponCode(['is_active' => false]);
         $this->postJson('/api/user/cart/apply-coupon', ['coupon' => $off->code])->assertStatus(400)->assertJsonPath('code', 'invalid');
-        $this->checkout(['coupon_code' => $off->code])->assertCreated()->assertJsonPath('discount', 0);
+        $this->checkout(['coupon_code' => $off->code])->assertStatus(422)->assertJsonPath('code', 'coupon_rejected')->assertJsonPath('reason', 'invalid');
     }
 
     public function test_first_order_only_and_specific_customers(): void

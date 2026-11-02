@@ -9,6 +9,9 @@ use App\Models\DiscountRule;
 use App\Models\Order;
 use App\Models\OrderPromotion;
 use App\Models\PromotionCampaign;
+use App\Models\FlashSale;
+use App\Models\FlashSaleRedemption;
+use App\Models\OrderItem;
 use App\Models\PromotionRedemption;
 use App\Models\User;
 use App\Support\StoreClock;
@@ -60,6 +63,14 @@ class MarketingSeeder extends Seeder
     /** Redemptions and snapshots for the demo orders, as checkout records them. */
     private function history(): void
     {
+        // One demo line was bought at the demo flash sale's price (the sale's limits count it).
+        $sale = FlashSale::with('items')->orderBy('id')->first();
+        if ($sale && !OrderItem::whereNotNull('flash_sale_id')->exists()) {
+            OrderItem::where('is_gift', false)->whereIn('product_id', $sale->items->pluck('product_id'))
+                ->whereHas('order', fn ($q) => $q->where('status', '!=', 'canceled'))->orderBy('id')->first()
+                ?->forceFill(['flash_sale_id' => $sale->id])->save();
+        }
+
         foreach (Order::withoutGlobalScopes()->with('items')->get() as $order) {
             $status = match ($order->status) {
                 'canceled' => CouponRedemption::CONSUMED, // demo orders kept their coupon use (as recorded)
@@ -77,6 +88,15 @@ class MarketingSeeder extends Seeder
                 OrderPromotion::create([
                     'order_id' => $order->id, 'source' => OrderPromotion::SOURCE_COUPON, 'coupon_id' => $coupon->id, 'promotion_type' => 'coupon',
                     'name' => $coupon->code, 'code' => $coupon->code, 'eligible_amount' => $order->subtotal ?? 0, 'discount_amount' => $order->discount_amount ?? 0,
+                ]);
+            }
+
+            // Flash-priced lines are counted toward their sale's limits, as checkout records them.
+            foreach ($order->items->whereNotNull('flash_sale_id')->where('is_gift', false) as $line) {
+                FlashSaleRedemption::firstOrCreate(['order_item_id' => $line->id], [
+                    'flash_sale_id' => $line->flash_sale_id, 'order_id' => $order->id, 'user_id' => $order->user_id,
+                    'product_id' => $line->product_id, 'product_size_id' => $line->product_size_id, 'quantity' => $line->quantity,
+                    'status' => $order->status === 'canceled' ? FlashSaleRedemption::RELEASED : ($order->status === 'completed' ? FlashSaleRedemption::CONSUMED : FlashSaleRedemption::RESERVED),
                 ]);
             }
 

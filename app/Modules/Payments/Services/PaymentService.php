@@ -24,15 +24,21 @@ use Illuminate\Support\Str;
 
 /**
  * The only code that changes a payment, and the only writer of orders.payment_status (a
- * projection of the order's latest payment). Dashboard actions, provider callbacks, courier
+ * projection of the order's effective payment). Dashboard actions, provider callbacks, courier
  * events and scheduled jobs all come through here.
  *
  * Rules:
  *  - an online payment becomes paid only on verified provider evidence: a valid signature,
  *    optional confirmation from the provider's API, matching amount, currency and reference;
  *    no admin action can mark it paid;
- *  - every provider notification is stored (payment_events) before it is acted on, keyed so a
- *    retried notification is processed once;
+ *  - every provider notification is stored (payment_events) and claimed before it is acted on,
+ *    keyed so a retried notification is processed once; an event whose processing died is
+ *    claimed again (PaymentEvent::claim) by a provider retry or payments:recover-events;
+ *  - an unpaid online payment is expired only after asking the provider (by transaction, or by
+ *    provider order when the transaction id never reached us);
+ *  - an order is paid by one payment: a later capture by another attempt is recorded, flagged
+ *    as a duplicate and refunded in full;
+ *  - lock order: order row, then payment rows (the order used by cancellation and refunds too);
  *  - COD collection (customer paid the courier/counter) and COD settlement (the cash reached us,
  *    CodSettlementService) are separate events.
  */
@@ -44,6 +50,9 @@ class PaymentService
     public const ACTOR_SYSTEM = 'system';
 
     private const MAX_ONLINE_ATTEMPTS = 5;
+
+    /** Without the provider API, an expired payment waits this long for a late webhook before the order is canceled. */
+    private const UNVERIFIED_EXPIRY_GRACE_MINUTES = 30;
 
     public function __construct(private GatewayRegistry $gateways)
     {
@@ -104,7 +113,13 @@ class PaymentService
         return $this->initiationResult($payment->fresh(), $initiation->checkoutUrl, null);
     }
 
-    /** A new attempt for an unpaid online order (the previous one failed, expired or was abandoned). */
+    /**
+     * A new attempt for an unpaid online order (the previous one failed, expired or was abandoned).
+     *
+     * The previous attempt is canceled here only: its checkout page may still be open at the
+     * provider and can still be paid (Paymob documents no way to withdraw an unpaid intention).
+     * Such a late capture is recorded and, when another attempt already paid, refunded.
+     */
     public function startNewAttempt(Order $order, ?int $customerId): Payment
     {
         return DB::transaction(function () use ($order, $customerId) {
@@ -114,7 +129,7 @@ class PaymentService
             if (!$order->requiresOnlinePayment() || $order->statusEnum() !== OrderStatus::Pending) {
                 throw new DomainException(api_trans('payments.not_payable'));
             }
-            if ($latest && $latest->status->isSettledPayment()) {
+            if ($this->effectivePaidPayment($order->id)) {
                 throw new DomainException(api_trans('payments.already_paid'));
             }
             if ($latest && $latest->attempt >= self::MAX_ONLINE_ATTEMPTS) {
@@ -122,10 +137,6 @@ class PaymentService
             }
             if (!$this->gateways->isReady(Payment::PROVIDER_PAYMOB)) {
                 throw new DomainException(api_trans('payments.unavailable'));
-            }
-
-            if ($latest && $latest->status === PaymentStatus::Pending) {
-                $this->transition($latest, PaymentStatus::Canceled, self::ACTOR_CUSTOMER, $customerId, 'Superseded by a new attempt');
             }
 
             $payment = Payment::create([
@@ -139,19 +150,27 @@ class PaymentService
                 'attempt' => ($latest?->attempt ?? 0) + 1,
                 'expires_at' => now()->addMinutes($this->ttlMinutes()),
             ]);
+
+            if ($latest && $latest->status === PaymentStatus::Pending) {
+                $this->transition($latest, PaymentStatus::Canceled, self::ACTOR_CUSTOMER, $customerId, 'Superseded by a new attempt', [
+                    'metadata' => array_merge($latest->metadata ?? [], ['superseded_by' => $payment->internal_reference, 'provider_may_still_capture' => true]),
+                ]);
+            }
+
             $this->history($payment, null, PaymentStatus::Pending, self::ACTOR_CUSTOMER, $customerId, 'Retry');
             $this->projectOrder($order->id);
 
             return $payment;
-        });
+        }, 3);
     }
 
     // ------------------------------------------------------------------ provider notifications
 
     /**
      * Store and apply a provider notification. Returns the stored event; its `result` says what
-     * happened (processed, duplicate, rejected, ignored). Throws only on our own failures, so the
-     * provider retries.
+     * happened (processed, rejected, ignored), or `was_duplicate` is set when it had already
+     * been applied (or is being applied by another worker: isInProgress()). Throws only on our
+     * own failures, so the provider retries.
      */
     public function handleNotification(string $provider, array $query, array $body, bool $isRedirect): PaymentEvent
     {
@@ -169,31 +188,103 @@ class PaymentService
             ]);
         }
 
-        $key = $notification->idempotencyKey($provider);
+        return $this->process($provider, $gateway, $notification, $notification->idempotencyKey($provider, $isRedirect ? 'redirect' : null), $eventType);
+    }
 
+    /**
+     * Re-apply provider events whose processing failed or died (stale "processing", legacy
+     * "received"). Run by payments:recover-events and before payments expire.
+     *
+     * @return array{retried: int, failed: int, exhausted: int, skipped: int}
+     */
+    public function recoverEvents(int $limit = 200): array
+    {
+        $stats = ['retried' => 0, 'failed' => 0, 'exhausted' => 0, 'skipped' => 0];
+
+        PaymentEvent::retryable()->orderBy('id')->limit($limit)->get()->each(function (PaymentEvent $event) use (&$stats) {
+            if ($event->attempts >= PaymentEvent::MAX_ATTEMPTS) {
+                $stats['exhausted']++;
+
+                return;
+            }
+
+            $gateway = $this->gateways->has($event->provider) ? $this->gateways->for($event->provider) : null;
+            if (!$gateway instanceof PaymobGateway || !$event->payload) {
+                $stats['skipped']++;
+
+                return;
+            }
+
+            if (!$event->claim()) {
+                return; // another worker took it
+            }
+
+            try {
+                $this->run($event->provider, $gateway, $gateway->notificationFromStored($event->payload), $event);
+                $stats['retried']++;
+            } catch (\Throwable $e) {
+                $stats['failed']++;
+                Log::warning('Payment event recovery failed', ['event' => $event->id, 'error' => $e->getMessage()]);
+            }
+        });
+
+        return $stats;
+    }
+
+    /**
+     * Monitoring: provider events that are still not applied after $minutes, and events that
+     * used up their automatic retries. Both need a person.
+     *
+     * @return array{stale: int, exhausted: int, oldest: ?string}
+     */
+    public function staleEvents(int $minutes = 15): array
+    {
+        $stale = PaymentEvent::retryable()->where('created_at', '<', now()->subMinutes($minutes));
+
+        return [
+            'stale' => (clone $stale)->count(),
+            'exhausted' => (clone $stale)->where('attempts', '>=', PaymentEvent::MAX_ATTEMPTS)->count(),
+            'oldest' => (clone $stale)->min('created_at'),
+        ];
+    }
+
+    /** Store (or find) the event for a statement, claim it, and apply it. */
+    private function process(string $provider, $gateway, GatewayNotification $notification, string $key, string $eventType, ?int $paymentId = null): PaymentEvent
+    {
         try {
             $event = PaymentEvent::create([
                 'provider' => $provider, 'event_type' => $eventType, 'provider_event_id' => $notification->transactionId,
-                'idempotency_key' => $key, 'signature_valid' => true, 'result' => PaymentEvent::RESULT_RECEIVED,
+                'idempotency_key' => $key, 'signature_valid' => true, 'payment_id' => $paymentId,
+                'result' => PaymentEvent::RESULT_PROCESSING, 'processing_started_at' => now(), 'attempts' => 1,
                 'payload' => $notification->raw ?: null,
             ]);
         } catch (UniqueConstraintViolationException) {
-            $existing = PaymentEvent::where('idempotency_key', $key)->firstOrFail();
-            // A previous delivery that failed on our side is processed again; anything else is a duplicate.
-            if ($existing->result !== PaymentEvent::RESULT_FAILED) {
-                return tap($existing, fn ($e) => $e->setAttribute('was_duplicate', true));
+            $event = PaymentEvent::where('idempotency_key', $key)->firstOrFail();
+
+            // Already applied, or being applied right now by another worker: nothing to do here.
+            if (!$event->claim()) {
+                return tap($event->fresh(), fn ($e) => $e->setAttribute('was_duplicate', true));
             }
-            $event = $existing;
         }
 
+        return $this->run($provider, $gateway, $notification, $event);
+    }
+
+    private function run(string $provider, $gateway, GatewayNotification $notification, PaymentEvent $event): PaymentEvent
+    {
         try {
             $this->apply($provider, $gateway, $notification, $event);
         } catch (\Throwable $e) {
-            $event->update(['result' => PaymentEvent::RESULT_FAILED, 'error' => Str::limit($e->getMessage(), 1000)]);
+            $event->update(['result' => PaymentEvent::RESULT_FAILED, 'error' => Str::limit($e->getMessage(), 1000), 'processing_started_at' => null]);
             throw $e;
         }
 
-        return $event->fresh();
+        $event->refresh();
+        if ($event->result === PaymentEvent::RESULT_PROCESSING) {
+            $event->update(['result' => PaymentEvent::RESULT_PROCESSED, 'processed_at' => now()]);
+        }
+
+        return $event;
     }
 
     private function apply(string $provider, $gateway, GatewayNotification $notification, PaymentEvent $event): void
@@ -223,6 +314,9 @@ class PaymentService
         }
 
         DB::transaction(function () use ($payment, $notification, $event, $isRefund) {
+            // Order first, then payment: concurrent callbacks for two attempts of one order are
+            // serialized, so the second always sees the first one paid.
+            Order::lockForUpdate()->find($payment->order_id);
             $payment = Payment::lockForUpdate()->findOrFail($payment->id);
 
             if ($isRefund) {
@@ -251,9 +345,10 @@ class PaymentService
             };
 
             $event->update(['result' => PaymentEvent::RESULT_PROCESSED, 'processed_at' => now()]);
-        });
+        }, 3);
     }
 
+    /** Called with the order and the payment locked. */
     private function markPaidByProvider(Payment $payment, array $ids, PaymentEvent $event): void
     {
         if ($payment->status->isSettledPayment()) {
@@ -265,7 +360,34 @@ class PaymentService
             return;
         }
 
+        $alreadyPaidBy = $this->effectivePaidPayment($payment->order_id, $payment->id);
+
         $this->transition($payment, PaymentStatus::Paid, self::ACTOR_PROVIDER, null, 'Verified provider payment', $ids + ['paid_at' => now(), 'failure_reason' => null]);
+
+        if ($alreadyPaidBy) {
+            // The order was already paid by another attempt: this capture is recorded (the money
+            // is ours to return), never applied, and refunded in full.
+            $reason = "Duplicate capture: order #{$payment->order_id} was already paid by {$alreadyPaidBy->internal_reference}";
+            $payment->forceFill([
+                'duplicate_of_payment_id' => $alreadyPaidBy->id,
+                'metadata' => array_merge($payment->metadata ?? [], ['needs_review' => $reason]),
+            ])->save();
+            $this->recordInternalEvent($payment, 'duplicate_capture.detected', ['duplicate_of' => $alreadyPaidBy->internal_reference, 'event' => $event->id]);
+            Log::warning('Duplicate payment capture', ['payment' => $payment->internal_reference, 'duplicate_of' => $alreadyPaidBy->internal_reference]);
+            $captured = $payment->fresh();
+            app(RefundService::class)->requestForPayment($captured, $captured->refundableMinor(), $reason, null);
+            $this->projectOrder($payment->order_id);
+
+            return;
+        }
+
+        // This payment pays the order: other open attempts are closed here. They may still be
+        // captured at the provider; such a capture arrives as a duplicate (above) and is refunded.
+        Payment::where('order_id', $payment->order_id)->whereKeyNot($payment->id)
+            ->whereIn('status', [PaymentStatus::Pending->value, PaymentStatus::AwaitingVerification->value])->lockForUpdate()->get()
+            ->each(fn (Payment $other) => $this->transition($other, PaymentStatus::Canceled, self::ACTOR_SYSTEM, null, "Order paid by {$payment->internal_reference}", [
+                'metadata' => array_merge($other->metadata ?? [], ['provider_may_still_capture' => true]),
+            ]));
 
         // Paid after the order was canceled (late payment): the money must go back.
         $order = Order::find($payment->order_id);
@@ -278,7 +400,7 @@ class PaymentService
     {
         $refunds = app(RefundService::class);
         $refund = Refund::where('payment_id', $payment->id)->where('provider_refund_id', $notification->transactionId)->first()
-            ?? Refund::where('payment_id', $payment->id)->whereIn('status', [Refund::PROCESSING, Refund::PENDING])->where('method', Refund::METHOD_GATEWAY)->orderBy('id')->first();
+            ?? Refund::where('payment_id', $payment->id)->whereIn('status', [Refund::PROCESSING, Refund::UNKNOWN, Refund::PENDING])->where('method', Refund::METHOD_GATEWAY)->orderBy('id')->first();
 
         $amountMinor = $notification->outcome === GatewayNotification::VOID || $notification->amountProviderUnits === null
             ? $payment->refundableMinor()
@@ -296,29 +418,28 @@ class PaymentService
         $event->update(['result' => PaymentEvent::RESULT_PROCESSED, 'processed_at' => now()]);
     }
 
-    /** Ask the provider about the payment now (dashboard "verify with provider", expiry job). */
+    /**
+     * Ask the provider about the payment now (dashboard "verify with provider", expiry job): by
+     * its transaction, or, when no transaction id reached us, by the provider order.
+     */
     public function refreshFromProvider(Payment $payment): Payment
     {
         $gateway = $this->gateways->for($payment->provider);
 
-        if (!$payment->provider_transaction_id) {
+        if ($payment->provider_transaction_id) {
+            $notification = $gateway->fetchTransaction($payment->provider_transaction_id);
+        } elseif ($payment->provider_order_id && $gateway instanceof PaymobGateway && $gateway->canInquire()) {
+            $notification = $gateway->fetchOrderTransaction($payment->provider_order_id);
+        } else {
             return $payment;
         }
 
-        $notification = $gateway->fetchTransaction($payment->provider_transaction_id);
         if (!$notification) {
             return $payment;
         }
 
-        $event = PaymentEvent::firstOrCreate(
-            ['idempotency_key' => $notification->idempotencyKey($payment->provider)],
-            ['provider' => $payment->provider, 'event_type' => 'inquiry.'.$notification->outcome, 'provider_event_id' => $notification->transactionId,
-                'signature_valid' => true, 'result' => PaymentEvent::RESULT_RECEIVED, 'payload' => $notification->raw, 'payment_id' => $payment->id],
-        );
-
-        if ($event->wasRecentlyCreated || $event->result === PaymentEvent::RESULT_FAILED) {
-            $this->apply($payment->provider, $gateway, $notification, $event);
-        }
+        // Same key as the webhook for this transaction: whichever arrives first applies it.
+        $this->process($payment->provider, $gateway, $notification, $notification->idempotencyKey($payment->provider), 'inquiry.'.$notification->outcome, $payment->id);
 
         return $payment->fresh();
     }
@@ -332,6 +453,7 @@ class PaymentService
     public function recordCodCollection(Payment $payment, int $amountMinor, string $via, string $actorType, ?int $adminId, ?string $note = null): Payment
     {
         return DB::transaction(function () use ($payment, $amountMinor, $via, $actorType, $adminId, $note) {
+            Order::lockForUpdate()->find($payment->order_id);
             $payment = Payment::lockForUpdate()->findOrFail($payment->id);
 
             if (!$payment->isCod()) {
@@ -359,7 +481,7 @@ class PaymentService
                 'collected_at' => now(),
                 'paid_at' => $complete ? now() : null,
             ]);
-        });
+        }, 3);
     }
 
     /** The courier could not collect (failed delivery). The payment stays due. */
@@ -390,7 +512,7 @@ class PaymentService
     /** Order canceled: unpaid payments are canceled; money already received is queued for refund. */
     public function onOrderCanceled(Order $order, string $actorType, ?int $actorId): void
     {
-        foreach (Payment::where('order_id', $order->id)->lockForUpdate()->get() as $payment) {
+        foreach (Payment::where('order_id', $order->id)->orderBy('id')->lockForUpdate()->get() as $payment) {
             if (in_array($payment->status, [PaymentStatus::Pending, PaymentStatus::AwaitingVerification, PaymentStatus::Unpaid], true)) {
                 $this->transition($payment, PaymentStatus::Canceled, $actorType, $actorId, 'Order canceled', ['collection_status' => null]);
             } elseif (($refundable = $payment->refundableMinor() - $this->openRefundsMinor($payment)) > 0) {
@@ -400,15 +522,23 @@ class PaymentService
     }
 
     /**
-     * Online payments past their expiry: confirmed with the provider when possible, otherwise
-     * expired; an order left without a successful payment is canceled, releasing its stock.
+     * Online payments past their expiry. Each is first reconciled with the provider (stuck
+     * events re-applied, then the transaction or provider order looked up); only a payment the
+     * provider confirms unpaid is expired, and an order left without a payment is canceled,
+     * releasing its stock. When the provider cannot be asked (no API key), the payment waits a
+     * grace period for a late webhook first. A payment that turns out paid later is still
+     * recorded, and refunded if its order was canceled (markPaidByProvider).
      */
     public function expireStale(): int
     {
+        $this->recoverEvents();
         $expired = 0;
 
         Payment::where('provider', Payment::PROVIDER_PAYMOB)->where('status', PaymentStatus::Pending->value)
             ->where('expires_at', '<=', now())->orderBy('id')->each(function (Payment $payment) use (&$expired) {
+                $gateway = $this->gateways->for($payment->provider);
+                $canAsk = $gateway instanceof PaymobGateway && $gateway->canInquire();
+
                 try {
                     $payment = $this->refreshFromProvider($payment);
                 } catch (PaymentGatewayException $e) {
@@ -417,21 +547,50 @@ class PaymentService
                     return; // try again next run rather than expiring a payment that may have succeeded
                 }
 
-                if ($payment->status !== PaymentStatus::Pending) {
+                if ($payment->status !== PaymentStatus::Pending || $this->hasUnresolvedEvents($payment)) {
+                    return;
+                }
+                if (!$canAsk && $payment->expires_at->gt(now()->subMinutes(self::UNVERIFIED_EXPIRY_GRACE_MINUTES))) {
                     return;
                 }
 
-                $this->transition($payment, PaymentStatus::Expired, self::ACTOR_SYSTEM, null, 'Not paid in time');
-                $expired++;
-
-                $order = Order::find($payment->order_id);
-                $paid = Payment::where('order_id', $payment->order_id)->whereIn('status', [PaymentStatus::Paid->value, PaymentStatus::Pending->value])->exists();
-                if ($order && !$paid && $order->canTransitionTo(OrderStatus::Canceled->value)) {
-                    app(OrderWorkflow::class)->transition($order, OrderStatus::Canceled, OrderWorkflow::ACTOR_SYSTEM, null, 'Online payment not completed in time');
+                if ($this->expire($payment)) {
+                    $expired++;
                 }
             });
 
         return $expired;
+    }
+
+    private function expire(Payment $payment): bool
+    {
+        return DB::transaction(function () use ($payment) {
+            $order = Order::lockForUpdate()->find($payment->order_id);
+            $payment = Payment::lockForUpdate()->findOrFail($payment->id);
+
+            if ($payment->status !== PaymentStatus::Pending) {
+                return false;
+            }
+
+            $this->transition($payment, PaymentStatus::Expired, self::ACTOR_SYSTEM, null, 'Not paid in time');
+
+            $open = Payment::where('order_id', $payment->order_id)->whereIn('status', [PaymentStatus::Paid->value, PaymentStatus::Pending->value])->exists();
+            if ($order && !$open && $order->canTransitionTo(OrderStatus::Canceled->value)) {
+                app(OrderWorkflow::class)->transition($order, OrderStatus::Canceled, OrderWorkflow::ACTOR_SYSTEM, null, 'Online payment not completed in time');
+            }
+
+            return true;
+        }, 3);
+    }
+
+    /** Provider statements about this payment that are not applied yet (failed, stuck, or in flight). */
+    private function hasUnresolvedEvents(Payment $payment): bool
+    {
+        return PaymentEvent::where('provider', $payment->provider)
+            ->whereIn('result', [PaymentEvent::RESULT_RECEIVED, PaymentEvent::RESULT_PROCESSING, PaymentEvent::RESULT_FAILED])
+            ->where('signature_valid', true)
+            ->where(fn ($q) => $q->where('payment_id', $payment->id)->orWhere('payload->merchant_order_id', $payment->internal_reference))
+            ->exists();
     }
 
     // ------------------------------------------------------------------ core
@@ -470,15 +629,19 @@ class PaymentService
         });
     }
 
-    /** orders.payment_status (+ verification fields) from the order's latest payment. */
+    /**
+     * orders.payment_status (+ verification fields) from the order's effective payment: the
+     * payment that paid it (never a duplicate capture), else the latest attempt.
+     */
     public function projectOrder(int $orderId): void
     {
-        $payment = Payment::where('order_id', $orderId)->latest('id')->first();
+        $payments = Payment::where('order_id', $orderId)->orderBy('id')->get();
 
-        if (!$payment) {
+        if ($payments->isEmpty()) {
             return;
         }
 
+        $payment = $payments->first(fn (Payment $p) => $p->status->isSettledPayment() && !$p->isDuplicateCapture()) ?? $payments->last();
         $status = $payment->status === PaymentStatus::Pending && $payment->isCod() ? PaymentStatus::Unpaid : $payment->status;
 
         Order::whereKey($orderId)->update([
@@ -487,6 +650,16 @@ class PaymentService
             'payment_verified_at' => $payment->verified_at ?? $payment->paid_at,
             'updated_at' => now(),
         ]);
+    }
+
+    /** The payment that paid the order (first settled, not a duplicate capture), if any. */
+    public function effectivePaidPayment(int $orderId, ?int $exceptPaymentId = null): ?Payment
+    {
+        return Payment::where('order_id', $orderId)
+            ->when($exceptPaymentId, fn ($q) => $q->whereKeyNot($exceptPaymentId))
+            ->whereIn('status', [PaymentStatus::Paid->value, PaymentStatus::PartiallyRefunded->value, PaymentStatus::Refunded->value])
+            ->whereNull('duplicate_of_payment_id')
+            ->orderBy('id')->first();
     }
 
     public function recordInternalEvent(Payment $payment, string $type, array $payload, string $result = PaymentEvent::RESULT_PROCESSED, ?string $error = null): PaymentEvent
@@ -543,7 +716,7 @@ class PaymentService
 
     private function openRefundsMinor(Payment $payment): int
     {
-        return Money::toMinor(Refund::where('payment_id', $payment->id)->whereIn('status', [Refund::PENDING, Refund::PROCESSING])->sum('amount'));
+        return Money::toMinor(Refund::where('payment_id', $payment->id)->whereIn('status', Refund::OPEN)->sum('amount'));
     }
 
     private function history(Payment $payment, ?PaymentStatus $from, PaymentStatus $to, string $actorType, ?int $actorId, ?string $note): void

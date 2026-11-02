@@ -11,13 +11,18 @@ class StockReservation extends Model
     public const FULFILLED = 'fulfilled';
     public const RELEASED = 'released';
 
-    protected $fillable = ['order_item_id', 'product_size_id', 'warehouse_id', 'quantity', 'status', 'fulfilled_at', 'released_at'];
+    protected $fillable = ['order_item_id', 'product_size_id', 'warehouse_id', 'inventory_batch_id', 'quantity', 'status', 'fulfilled_at', 'released_at'];
 
     protected $casts = ['quantity' => 'integer', 'fulfilled_at' => 'datetime', 'released_at' => 'datetime'];
 
     public function orderItem()
     {
         return $this->belongsTo(OrderItem::class);
+    }
+
+    public function batch()
+    {
+        return $this->belongsTo(InventoryBatch::class, 'inventory_batch_id');
     }
 
     public function warehouse()

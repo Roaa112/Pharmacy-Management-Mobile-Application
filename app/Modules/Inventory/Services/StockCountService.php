@@ -67,7 +67,8 @@ class StockCountService
             foreach ($count->items()->orderBy('product_size_id')->get() as $item) {
                 // Lock the SKU first (the shared lock order), then read on_hand.
                 \App\Models\ProductSize::lockForUpdate()->find($item->product_size_id);
-                $balance = InventoryBalance::firstWhere(['warehouse_id' => $count->warehouse_id, 'product_size_id' => $item->product_size_id]);
+                // Locking read: the committed on_hand, not this transaction's (possibly older) snapshot.
+                $balance = InventoryBalance::where(['warehouse_id' => $count->warehouse_id, 'product_size_id' => $item->product_size_id])->lockForUpdate()->first();
                 $onHand = (int) ($balance?->on_hand ?? 0);
                 $reserved = (int) ($balance?->reserved ?? 0);
 

@@ -10,7 +10,10 @@ use App\Models\PurchaseReceiptItem;
 use App\Models\StockMovement;
 use App\Models\Supplier;
 use App\Models\SupplierReturn;
+use App\Models\SupplierInvoice;
+use App\Models\SupplierPayment;
 use App\Models\SupplierReturnItem;
+use Illuminate\Database\UniqueConstraintViolationException;
 use App\Support\DocumentNumber;
 use App\Support\Money;
 use DomainException;
@@ -98,7 +101,11 @@ class PurchasingService
      * Record goods received against an order. Partial receipts are allowed; receiving more than
      * is outstanding on a line is refused.
      *
-     * @param  array<int, array{received?: int, damaged?: int}>  $quantities  purchase_order_item_id => units
+     * Each line may name its lot and expiry date (as printed on the packs): the units go to that
+     * batch; a batch that is already expired (or would be on arrival) is refused. Without them the
+     * units go to the SKU's batch of unknown lot and expiry.
+     *
+     * @param  array<int, array{received?: int, damaged?: int, lot_number?: ?string, expiry_date?: ?string}>  $quantities  purchase_order_item_id => units
      */
     public function receive(PurchaseOrder $order, array $quantities, ?string $supplierInvoiceNumber, ?string $notes, ?int $adminId): PurchaseReceipt
     {
@@ -128,7 +135,16 @@ class PurchasingService
                     throw new DomainException("Only {$item->outstanding} units are outstanding on one of the lines.");
                 }
 
-                $lines[$item->id] = [$item, $good, $damaged];
+                $expiry = filled($line['expiry_date'] ?? null) ? \Illuminate\Support\Carbon::parse($line['expiry_date'])->toDateString() : null;
+                if ($expiry !== null && $expiry <= \App\Support\StoreClock::now()->toDateString()) {
+                    throw new DomainException("Lot ".($line['lot_number'] ?? '')." expired on {$expiry}: expired medicine cannot be received into stock.");
+                }
+
+                if ($expiry === null && $good > 0 && config('pharmacy.require_expiry_on_receipt')) {
+                    throw new DomainException('Enter the expiry date printed on the packs for every line received.');
+                }
+
+                $lines[$item->id] = [$item, $good, $damaged, $line['lot_number'] ?? null, $expiry];
             }
 
             if (!$lines) {
@@ -144,7 +160,7 @@ class PurchasingService
             // SKU rows are locked in id order (the same order as checkout).
             uasort($lines, fn ($a, $b) => $a[0]->product_size_id <=> $b[0]->product_size_id);
 
-            foreach ($lines as [$item, $good, $damaged]) {
+            foreach ($lines as [$item, $good, $damaged, $lot, $expiry]) {
                 $receiptItem = PurchaseReceiptItem::create([
                     'purchase_receipt_id' => $receipt->id, 'purchase_order_item_id' => $item->id,
                     'product_size_id' => $item->product_size_id, 'quantity_received' => $good,
@@ -155,9 +171,12 @@ class PurchasingService
                     $this->updateAverageCost($item->product_size_id, $good, $item->unit_cost);
                 }
 
+                $batch = $this->inventory->batchFor($item->product_size_id, $lot, $expiry,
+                    ['supplier_id' => $order->supplier_id, 'purchase_receipt_item_id' => $receiptItem->id, 'unit_cost' => $item->unit_cost]);
+
                 $this->inventory->apply($item->product_size_id, $order->warehouse_id, ['on_hand' => $good, 'damaged' => $damaged],
                     StockMovement::TYPE_PURCHASE_RECEIPT,
-                    ['reference' => $receiptItem, 'admin_id' => $adminId, 'unit_cost' => $item->unit_cost, 'reason' => "{$receipt->reference} for {$order->reference}"],
+                    ['reference' => $receiptItem, 'admin_id' => $adminId, 'unit_cost' => $item->unit_cost, 'reason' => "{$receipt->reference} for {$order->reference}", 'batch_id' => $batch->id],
                     "purchase-receipt:{$receiptItem->id}");
 
                 $item->increment('quantity_received', $good + $damaged);
@@ -247,11 +266,43 @@ class PurchasingService
         });
     }
 
+    /**
+     * A payment to a supplier, on account or against one of its invoices. Under the invoice (or
+     * supplier) row lock, so payments submitted at once cannot both pass the "left on the
+     * invoice" check; a repeated request_key (the form's one-time key) returns the payment
+     * already recorded instead of a second one.
+     */
+    public function recordSupplierPayment(Supplier $supplier, array $data, ?int $adminId): SupplierPayment
+    {
+        try {
+            return DB::transaction(function () use ($supplier, $data, $adminId) {
+                if (filled($data['request_key'] ?? null) && ($existing = SupplierPayment::where('request_key', $data['request_key'])->first())) {
+                    return $existing;
+                }
+
+                if ($data['supplier_invoice_id'] ?? null) {
+                    $invoice = SupplierInvoice::where('supplier_id', $supplier->id)->lockForUpdate()->findOrFail($data['supplier_invoice_id']);
+                    $paidMinor = Money::toMinor(SupplierPayment::where('supplier_invoice_id', $invoice->id)->lockForUpdate()->sum('amount'));
+                    if ($paidMinor + Money::toMinor($data['amount']) > Money::toMinor($invoice->amount)) {
+                        throw new DomainException('The payment is larger than what is left on that invoice.');
+                    }
+                } else {
+                    Supplier::lockForUpdate()->findOrFail($supplier->id);
+                }
+
+                return $supplier->payments()->create($data + ['created_by' => $adminId]);
+            }, 3);
+        } catch (UniqueConstraintViolationException) {
+            // The same form submitted twice at the same moment: the other request recorded it.
+            return SupplierPayment::where('request_key', $data['request_key'])->firstOrFail();
+        }
+    }
+
     /** Weighted average cost over the units on hand in all warehouses. */
     private function updateAverageCost(int $sizeId, int $quantity, $unitCost): void
     {
         $size = ProductSize::lockForUpdate()->findOrFail($sizeId);
-        $onHand = (int) $size->balances()->sum('on_hand');
+        $onHand = (int) $size->balances()->lockForUpdate()->sum('on_hand'); // locking read: committed units, not a stale snapshot
         $currentMinor = Money::toMinor($size->cost_price ?? $unitCost);
         $newMinor = intdiv($currentMinor * $onHand + Money::toMinor($unitCost) * $quantity + intdiv($onHand + $quantity, 2), $onHand + $quantity);
 

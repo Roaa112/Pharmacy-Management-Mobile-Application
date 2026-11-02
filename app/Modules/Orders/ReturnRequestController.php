@@ -46,6 +46,11 @@ public function store(Request $request)
         return response()->json(['message' => api_trans('returns.canceled_order'), 'code' => 'order_canceled'], 422);
     }
 
+    // Only units that left the warehouse can come back: an order still being prepared is canceled, not returned.
+    if (!\App\Modules\Orders\Services\ReturnDecisionService::hasDispatchedUnits($order)) {
+        return response()->json(['message' => api_trans('returns.not_delivered'), 'code' => 'order_not_delivered'], 422);
+    }
+
     // Return window (settings.return_window_days). Unset = no time limit, as before.
     if ($windowDays = Setting::current()->returnWindowDays()) {
         if ($order->status !== 'completed') {

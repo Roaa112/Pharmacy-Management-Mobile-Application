@@ -5,7 +5,9 @@ namespace App\Modules\Inventory;
 use App\Http\Controllers\Controller;
 use App\Models\AdminAuditLog;
 use App\Models\Category;
+use App\Models\BatchBalance;
 use App\Models\InventoryBalance;
+use App\Models\InventoryBatch;
 use App\Models\ProductSize;
 use App\Models\Setting;
 use App\Models\StockMovement;
@@ -117,6 +119,7 @@ class InventoryController extends Controller
             'Manual adjustments (net)' => $sum(StockMovement::TYPE_ADJUSTMENT),
             'Count corrections (net)' => $sum(StockMovement::TYPE_COUNT_CORRECTION),
             'Cancellations put back (legacy orders)' => $sum(StockMovement::TYPE_CANCELLATION),
+            'Expired (taken off sale)' => -$sum(StockMovement::TYPE_EXPIRY),
         ];
 
         $current = [
@@ -142,7 +145,11 @@ class InventoryController extends Controller
             'ledgerOnHand' => $ledgerOnHand,
             'timeline' => $timeline,
             'warehouses' => Warehouse::where('is_active', true)->orderByDesc('is_default')->orderBy('name')->get(),
-            'reservations' => $size->reservations()->where('status', 'active')->with('orderItem:id,order_id', 'warehouse:id,code')->get(),
+            'reservations' => $size->reservations()->where('status', 'active')->with('orderItem:id,order_id', 'warehouse:id,code', 'batch')->get(),
+            'batches' => BatchBalance::where('product_size_id', $size->id)->with('batch', 'warehouse:id,code')
+                ->whereRaw('on_hand + damaged + quarantined + in_transit > 0')->get()
+                ->sortBy(fn ($b) => [$b->batch->expiry_date === null ? 1 : 0, $b->batch->expiry_date?->toDateString(), $b->inventory_batch_id])->values(),
+            'batchOptions' => InventoryBatch::where('product_size_id', $size->id)->fefo()->get(),
         ]);
     }
 
@@ -178,15 +185,17 @@ class InventoryController extends Controller
             'disposed' => 'nullable|integer|min:0',
             'reason' => 'required|string|max:255',
             'notes' => 'nullable|string|max:1000',
+            'batch_id' => ['nullable', 'integer', Rule::exists('inventory_batches', 'id')->where('product_size_id', $size->id)],
         ]);
         $adminId = auth('admin')->id();
+        $batchId = isset($data['batch_id']) ? (int) $data['batch_id'] : null;
 
         try {
             match ($data['operation']) {
-                'adjust' => $inventory->adjust($size->id, $data['warehouse_id'], (int) $data['quantity'], $data['reason'], $adminId, $data['notes'] ?? null),
-                'damage' => $inventory->markDamaged($size->id, $data['warehouse_id'], (int) $data['quantity'], $data['reason'], $adminId),
-                'write_off' => $inventory->writeOffDamaged($size->id, $data['warehouse_id'], (int) $data['quantity'], $data['reason'], $adminId),
-                'inspect' => $inventory->inspectQuarantine($size->id, $data['warehouse_id'], (int) ($data['restock'] ?? 0), (int) ($data['damaged'] ?? 0), (int) ($data['disposed'] ?? 0), $data['reason'], $adminId),
+                'adjust' => $inventory->adjust($size->id, $data['warehouse_id'], (int) $data['quantity'], $data['reason'], $adminId, $data['notes'] ?? null, $batchId),
+                'damage' => $inventory->markDamaged($size->id, $data['warehouse_id'], (int) $data['quantity'], $data['reason'], $adminId, $batchId),
+                'write_off' => $inventory->writeOffDamaged($size->id, $data['warehouse_id'], (int) $data['quantity'], $data['reason'], $adminId, $batchId),
+                'inspect' => $inventory->inspectQuarantine($size->id, $data['warehouse_id'], (int) ($data['restock'] ?? 0), (int) ($data['damaged'] ?? 0), (int) ($data['disposed'] ?? 0), $data['reason'], $adminId, $batchId),
             };
         } catch (DomainException $e) {
             return redirect()->back()->withInput()->with('error', $e->getMessage());
@@ -240,6 +249,12 @@ class InventoryController extends Controller
             'from' => $from,
             'to' => $to,
             'problems' => $integrity->problems(),
+            'nearExpiryDays' => $days = max(0, (int) config('pharmacy.near_expiry_days')),
+            'expiring' => BatchBalance::query()
+                ->whereHas('batch', fn ($q) => $q->whereNotNull('expiry_date')->where('expiry_date', '<=', \App\Support\StoreClock::now()->addDays($days)->toDateString()))
+                ->whereRaw('on_hand + damaged + quarantined + in_transit > 0')->with(['batch.size.product:id,name_en', 'warehouse:id,code'])->limit(200)->get()
+                ->sortBy(fn ($b) => $b->batch->expiry_date->toDateString())->values(),
+            'unknownExpiryUnits' => (int) BatchBalance::whereHas('batch', fn ($q) => $q->whereNull('expiry_date'))->sum('on_hand'),
         ]);
     }
 

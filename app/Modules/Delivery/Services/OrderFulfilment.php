@@ -139,6 +139,11 @@ class OrderFulfilment
     ): array {
         try {
             return DB::transaction(function () use ($shipment, $status, $rawStatus, $source, $adminId, $occurredAt, $payload, $idempotencyKey, $note) {
+                // The order row first, as order cancellation and payments do (order, then shipment,
+                // then payment): a courier event and an admin action on the same order wait for each
+                // other instead of deadlocking.
+                Order::lockForUpdate()->find($shipment->order_id);
+
                 if ($existing = ShipmentEvent::where('idempotency_key', $idempotencyKey)->first()) {
                     return [$existing, false];
                 }
@@ -158,7 +163,7 @@ class OrderFulfilment
                 $this->apply($event);
 
                 return [$event->fresh(), true];
-            });
+            }, 3);
         } catch (UniqueConstraintViolationException) {
             // Another request recorded the same event at the same moment.
             return [ShipmentEvent::where('idempotency_key', $idempotencyKey)->firstOrFail(), false];

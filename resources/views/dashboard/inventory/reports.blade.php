@@ -20,6 +20,29 @@
     </div>
 </div>
 
+<div class="card mb-3">
+    <div class="card-header"><h3 class="card-title">Expired and expiring within {{ $nearExpiryDays }} days</h3><div class="card-actions small text-secondary">expired units are never sold; a daily job moves unreserved ones to damaged</div></div>
+    <div class="table-responsive">
+        <table class="table card-table table-vcenter">
+            <thead><tr><th>Product</th><th>Lot</th><th>Expiry</th><th>WH</th><th class="text-end">On hand</th><th class="text-end">Reserved</th><th class="text-end">Damaged</th></tr></thead>
+            @forelse ($expiring as $row)
+                <tr class="{{ $row->batch->isExpired() ? 'table-danger' : '' }}">
+                    <td><a href="{{ route('dashboard.inventory.show', $row->product_size_id) }}">{{ $row->batch->size?->product?->name_en ?? '—' }} — {{ $row->batch->size?->size }}</a></td>
+                    <td>{{ $row->batch->lot_number ?? '—' }}</td>
+                    <td>{{ $row->batch->expiry_date->toDateString() }} @if ($row->batch->isExpired())<span class="badge bg-red-lt">expired</span>@endif</td>
+                    <td>{{ $row->warehouse->code }}</td>
+                    <td class="text-end">{{ $row->on_hand }}</td>
+                    <td class="text-end">{{ $row->reserved }}</td>
+                    <td class="text-end">{{ $row->damaged }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="7" class="text-secondary">Nothing expiring.</td></tr>
+            @endforelse
+        </table>
+    </div>
+    <div class="card-footer small text-secondary">{{ $unknownExpiryUnits }} unit(s) on hand have no known expiry (received before batch tracking or without an expiry date). Record their lots with a stock count.</div>
+</div>
+
 <div class="row row-cards">
     <div class="col-lg-6">
         <div class="card">

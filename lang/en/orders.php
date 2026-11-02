@@ -38,4 +38,5 @@ return [
     'status_updated' => 'Order status updated',
     'size_unavailable' => 'Not available',
     'gift_description' => 'Gift: :product',
+    'coupon_rejected' => 'The coupon cannot be used: :reason',
 ];

@@ -185,6 +185,7 @@ class FinancialTest extends TestCase
     {
         $admin = Admin::create(['name' => 'A', 'email' => 'a@example.com', 'password' => 'secret-password']);
         $order = $this->makeOrder($this->user, $this->makeSize(price: 100), status: 'completed');
+        $this->payInCash($order);
         $this->returnRequest($order, 50)->assertCreated();
         $return = ReturnRequest::sole();
 

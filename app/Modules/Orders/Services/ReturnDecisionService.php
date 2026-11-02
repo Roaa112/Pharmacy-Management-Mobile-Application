@@ -109,7 +109,7 @@ class ReturnDecisionService
             app(RefundService::class)->requestForReturn($return, $amountMinor, $adminId);
 
             return $return;
-        });
+        }, 3);
     }
 
     public function reject(int $returnId, ?string $note, ?int $adminId): ReturnRequest
@@ -171,6 +171,12 @@ class ReturnDecisionService
                 ->whereHas('returnRequest', fn ($q) => $q->where('status', 'accepted'))
                 ->sum('quantity');
 
+            // Only dispatched units can come back: a reserved (never shipped) line has nothing in the
+            // customer's hands, and quarantining it would create stock out of nothing.
+            if (!self::lineWasDispatched($order, $item)) {
+                throw new DomainException('One of the lines was never dispatched; cancel the order instead of returning it.');
+            }
+
             if ($alreadyReturned + (int) $quantity > $item->quantity) {
                 throw new DomainException('More units would be returned than were ordered for one of the lines.');
             }
@@ -179,6 +185,21 @@ class ReturnDecisionService
         }
 
         return $received;
+    }
+
+    /**
+     * The line's units left the warehouse and are with the customer: fulfilled by dispatch, or a
+     * legacy line (stock taken at checkout, no stock_state) of an order that was completed or sent out.
+     */
+    public static function lineWasDispatched(Order $order, OrderItem $item): bool
+    {
+        return $item->stock_state === OrderItem::STOCK_FULFILLED
+            || ($item->stock_state === null && $order->statusEnum()->isDispatched());
+    }
+
+    public static function hasDispatchedUnits(Order $order): bool
+    {
+        return $order->items->contains(fn (OrderItem $item) => self::lineWasDispatched($order, $item));
     }
 
     /**

@@ -82,6 +82,8 @@ class PurchaseOrderController extends Controller
             'lines' => 'required|array',
             'lines.*.received' => 'nullable|integer|min:0',
             'lines.*.damaged' => 'nullable|integer|min:0',
+            'lines.*.lot_number' => 'nullable|string|max:64',
+            'lines.*.expiry_date' => 'nullable|date',
             'supplier_invoice_number' => 'nullable|string|max:64',
             'notes' => 'nullable|string|max:1000',
         ]);

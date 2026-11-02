@@ -31,7 +31,7 @@ class User extends Authenticatable
      *
      * @var list<string>
      */
-    protected $hidden = ['password', 'otp_code' , 'remember_token',];
+    protected $hidden = ['password', 'otp_code', 'otp_attempts', 'remember_token'];
     /**
      * Get the attributes that should be cast.
      *
@@ -44,6 +44,7 @@ class User extends Authenticatable
             'is_active' => 'boolean',
             'is_verified' => 'boolean',
             'otp_expires_at' => 'datetime',
+            'otp_attempts' => 'integer',
         ];
     }
 
