@@ -18,6 +18,10 @@ class ReconcileRefunds extends Command
     {
         $outcomes = [];
 
+        if ($stale = $refunds->flagStaleProcessing()) {
+            Log::warning('Refunds left processing without a provider answer were marked unknown', ['count' => $stale]);
+        }
+
         Refund::where('status', Refund::UNKNOWN)->orderBy('id')->each(function (Refund $refund) use ($refunds, &$outcomes) {
             $outcome = $refunds->reconcile($refund)['outcome'];
             $outcomes[$outcome] = ($outcomes[$outcome] ?? 0) + 1;

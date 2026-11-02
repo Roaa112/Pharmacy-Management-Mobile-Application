@@ -32,11 +32,13 @@ class StockCountService
     /** @param array<int, int|string|null> $counts product_size_id => units counted (blank = not counted) */
     public function record(StockCount $count, array $counts): StockCount
     {
-        if ($count->status !== StockCount::DRAFT) {
-            throw new DomainException('This count is already '.$count->status.'.');
-        }
-
         DB::transaction(function () use ($count, $counts) {
+            // Locked and re-read: a count completed or canceled meanwhile (another admin) is not changed.
+            $count = StockCount::lockForUpdate()->findOrFail($count->id);
+            if ($count->status !== StockCount::DRAFT) {
+                throw new DomainException('This count is already '.$count->status.'.');
+            }
+
             foreach ($counts as $sizeId => $counted) {
                 if ($counted === null || $counted === '') {
                     continue;
@@ -93,11 +95,15 @@ class StockCountService
 
     public function cancel(StockCount $count): StockCount
     {
-        if ($count->status !== StockCount::DRAFT) {
-            throw new DomainException('Only a draft count can be canceled.');
-        }
-        $count->update(['status' => StockCount::CANCELED]);
+        return DB::transaction(function () use ($count) {
+            // Locked and re-read: a count completed meanwhile has already corrected the stock.
+            $count = StockCount::lockForUpdate()->findOrFail($count->id);
+            if ($count->status !== StockCount::DRAFT) {
+                throw new DomainException('Only a draft count can be canceled.');
+            }
+            $count->update(['status' => StockCount::CANCELED]);
 
-        return $count;
+            return $count;
+        });
     }
 }

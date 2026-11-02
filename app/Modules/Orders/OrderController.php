@@ -54,7 +54,8 @@ class OrderController extends Controller
         }
 
         try {
-            $order = $this->workflow->transition($order, OrderStatus::Canceled, OrderWorkflow::ACTOR_CUSTOMER, $request->user()->id);
+            // Pending is re-checked under the order lock: the warehouse may have moved it on since the read above.
+            $order = $this->workflow->transition($order, OrderStatus::Canceled, OrderWorkflow::ACTOR_CUSTOMER, $request->user()->id, onlyFrom: [OrderStatus::Pending]);
         } catch (DomainException) {
             return response()->json(['success' => false, 'message' => api_trans('orders.cancel_not_allowed'), 'code' => 'cancel_not_allowed'], 422);
         }

@@ -49,8 +49,8 @@ class RefundService
 
         return DB::transaction(function () use ($return, $amountMinor, $adminId) {
             $order = Order::lockForUpdate()->findOrFail($return->order_id);
-            $payment = Payment::where('order_id', $order->id)->whereNull('duplicate_of_payment_id')->orderBy('id')->lockForUpdate()->get()
-                ->first(fn (Payment $p) => $p->refundableMinor() > 0);
+            $payment = $this->payments->lockOrderPayments($order->id)
+                ->first(fn (Payment $p) => $p->duplicate_of_payment_id === null && $p->refundableMinor() > 0);
 
             $available = $payment ? $payment->refundableMinor() - $this->openMinor($payment) : 0;
             if ($amountMinor > $available) {
@@ -99,6 +99,51 @@ class RefundService
                 'requested_by' => $adminId,
             ]);
         });
+    }
+
+    /**
+     * A refund the provider already made (from its own dashboard): recorded as requested and
+     * succeeded, so our books match the provider. Open requests do not reduce what can be
+     * recorded here (the money has moved whatever we planned); they are capped by what is left
+     * when they are paid out (process()). More than was received cannot be recorded.
+     */
+    public function recordProviderRefund(Payment $payment, int $amountMinor, ?string $providerRefundId): Refund
+    {
+        return DB::transaction(function () use ($payment, $amountMinor, $providerRefundId) {
+            Order::lockForUpdate()->find($payment->order_id);
+            $payment = Payment::lockForUpdate()->findOrFail($payment->id);
+
+            if ($amountMinor <= 0 || $amountMinor > $payment->refundableMinor()) {
+                throw new DomainException("The provider refunded {$amountMinor} (minor units) on payment {$payment->internal_reference}, more than is left to refund; check it by hand.");
+            }
+
+            $refund = DocumentNumber::create(Refund::class, 'RF', [
+                'order_id' => $payment->order_id,
+                'payment_id' => $payment->id,
+                'amount' => Money::fromMinor($amountMinor),
+                'currency' => $payment->currency,
+                'method' => Refund::METHOD_GATEWAY,
+                'status' => Refund::PENDING,
+                'reason' => 'Refunded at the provider',
+                'provider_refund_id' => $providerRefundId,
+            ]);
+
+            return $this->markSucceeded($refund, $providerRefundId, null);
+        }, 3);
+    }
+
+    /**
+     * Gateway refunds marked "processing" whose answer was never recorded (the worker died between
+     * sending and recording): after $minutes they become "unknown", to be reconciled with the
+     * provider like any unanswered request instead of staying stuck (and blocking the payment's
+     * remaining refunds) forever.
+     */
+    public function flagStaleProcessing(int $minutes = 30): int
+    {
+        return Refund::where('status', Refund::PROCESSING)->where('method', Refund::METHOD_GATEWAY)
+            ->whereNull('provider_refund_id')->whereNull('processed_at')
+            ->where('updated_at', '<', now()->subMinutes($minutes))
+            ->update(['status' => Refund::UNKNOWN, 'failure_reason' => 'No answer from the provider was recorded; reconciled with the provider.', 'updated_at' => now()]);
     }
 
     /**
@@ -270,6 +315,10 @@ class RefundService
 
             if ($refund->status === Refund::SUCCEEDED) {
                 return $refund;
+            }
+            if ($refund->status === Refund::CANCELED) {
+                // Canceled while it was being paid out (two admins): nothing may be recorded as paid back.
+                throw new DomainException("Refund {$refund->reference} was canceled; record a new refund if money was paid back.");
             }
 
             $refund->update([

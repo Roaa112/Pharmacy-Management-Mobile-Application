@@ -120,11 +120,13 @@ public function show($id)
 public function cancel($id)
 {
     $return = ReturnRequest::where('user_id', auth()->id())->findOrFail($id);
-    if ($return->status !== 'pending') {
+
+    // One conditional update, not read-then-write: a return the pharmacy accepted (refund and
+    // quarantine done) in the meantime must stay accepted, or its units could be returned again.
+    $canceled = ReturnRequest::whereKey($return->id)->where('status', 'pending')->update(['status' => 'canceled', 'updated_at' => now()]);
+    if ($canceled !== 1) {
         return response()->json(['message' => api_trans('returns.cannot_cancel')], 400);
     }
-
-    $return->update(['status' => 'canceled']);
 
     return response()->json(['message' => api_trans('returns.canceled')]);
 }

@@ -38,16 +38,20 @@ class OrderWorkflow
     }
 
     /**
+     * @param  list<OrderStatus>|null  $onlyFrom  statuses the caller's decision was based on (e.g. a customer may cancel
+     *                                            only a pending order): checked under the lock, so an order that moved on
+     *                                            between the caller's read and the lock is refused, not changed.
+     *
      * @throws DomainException when the transition is not allowed (nothing is changed)
      */
-    public function transition(Order $order, OrderStatus $to, string $actorType, ?int $actorId = null, ?string $note = null): Order
+    public function transition(Order $order, OrderStatus $to, string $actorType, ?int $actorId = null, ?string $note = null, ?array $onlyFrom = null): Order
     {
-        return DB::transaction(function () use ($order, $to, $actorType, $actorId, $note) {
+        return DB::transaction(function () use ($order, $to, $actorType, $actorId, $note, $onlyFrom) {
             // Lock so a double-submitted cancel cannot restore stock twice.
             $order = Order::lockForUpdate()->findOrFail($order->id);
             $from = $order->statusEnum();
 
-            if (!$from->canTransitionTo($to)) {
+            if (!$from->canTransitionTo($to) || ($onlyFrom !== null && !in_array($from, $onlyFrom, true))) {
                 throw new DomainException(__('orders.transition_refused', ['from' => $from->value, 'to' => $to->value]));
             }
 

@@ -24,9 +24,9 @@ use App\Support\Money;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Symfony\Component\Process\Process;
 use Tests\Concerns\BuildsPromotions;
 use Tests\Concerns\BuildsShop;
+use Tests\Concerns\RunsRaces;
 use Tests\TestCase;
 
 /**
@@ -40,7 +40,7 @@ use Tests\TestCase;
  */
 class ConcurrencyTest extends TestCase
 {
-    use DatabaseMigrations, BuildsShop, BuildsPromotions;
+    use DatabaseMigrations, BuildsShop, BuildsPromotions, RunsRaces;
 
     private const PAYMOB = ['environment' => 'sandbox', 'verify_with_api' => false, 'amount_factor' => 1, 'currency' => 'EGP',
         'sandbox' => ['hmac_secret' => 'concurrency-hmac']];
@@ -52,70 +52,6 @@ class ConcurrencyTest extends TestCase
         if (!in_array(DB::getDriverName(), ['mysql', 'mariadb'], true)) {
             $this->markTestSkipped('Concurrency is verified on MySQL/MariaDB only (real row locks and REPEATABLE READ).');
         }
-    }
-
-    /**
-     * Run the workers in parallel; returns each worker's decoded JSON line.
-     *
-     * @param  list<array{0: string, 1: array}>  $workers  [scenario, arguments]
-     * @return list<array>
-     */
-    private function race(array $workers): array
-    {
-        $connection = config('database.connections.'.DB::getDefaultConnection());
-        $env = [
-            'APP_ENV' => 'testing', 'DB_CONNECTION' => DB::getDefaultConnection(), 'DB_HOST' => $connection['host'], 'DB_PORT' => (string) $connection['port'],
-            'DB_DATABASE' => $connection['database'], 'DB_USERNAME' => $connection['username'], 'DB_PASSWORD' => (string) $connection['password'],
-            'CACHE_STORE' => 'array', 'QUEUE_CONNECTION' => 'sync', 'MAIL_MAILER' => 'array', 'SESSION_DRIVER' => 'array', 'LOG_CHANNEL' => 'null', 'BCRYPT_ROUNDS' => '4',
-        ];
-        $startAt = sprintf('%.3f', microtime(true) + 6 + count($workers) * 0.08);
-
-        $processes = array_map(function (array $worker) use ($env, $startAt) {
-            $process = new Process([PHP_BINARY, base_path('tests/Concurrency/worker.php'), $worker[0], $startAt, json_encode($worker[1])], base_path(), $env, null, 300);
-            $process->start();
-
-            return $process;
-        }, $workers);
-
-        return array_map(function (Process $process) {
-            try {
-                $process->wait();
-            } catch (\Symfony\Component\Process\Exception\ProcessTimedOutException $e) {
-                // Evidence for a stuck worker: what MySQL was doing (open transactions, lock waits).
-                $transactions = collect(DB::select('SELECT trx_state, TIMESTAMPDIFF(SECOND, trx_started, NOW()) AS age_s, trx_query FROM information_schema.innodb_trx'))
-                    ->map(fn ($t) => "{$t->trx_state} {$t->age_s}s ".mb_substr((string) $t->trx_query, 0, 120))->implode("\n");
-                $this->fail("Worker timed out.\nOpen transactions:\n".($transactions ?: '(none)')."\nWorker output:\n".$process->getOutput().$process->getErrorOutput());
-            }
-            $line = trim((string) collect(explode("\n", trim($process->getOutput())))->last());
-            $decoded = json_decode($line, true);
-            $this->assertIsArray($decoded, 'Worker output: '.$process->getOutput().$process->getErrorOutput());
-
-            return $decoded;
-        }, $processes);
-    }
-
-    private function statuses(array $results): array
-    {
-        $counts = array_count_values(array_map(fn ($r) => (string) $r['status'], $results));
-        ksort($counts);
-
-        return $counts;
-    }
-
-    private function noExceptions(array $results): void
-    {
-        $exceptions = array_values(array_filter($results, fn ($r) => $r['status'] === 'exception'));
-        $this->assertSame([], $exceptions, 'No worker may fail with an unexpected exception (deadlock, lock wait timeout, 500).');
-    }
-
-    private function shoppers(int $count, $size, int $quantity = 1): array
-    {
-        return array_map(function () use ($size, $quantity) {
-            $user = User::factory()->create();
-            $this->putInCart($user, $size, $quantity);
-
-            return $user;
-        }, range(1, $count));
     }
 
     // ------------------------------------------------------------------ 1. last unit

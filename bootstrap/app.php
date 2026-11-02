@@ -44,6 +44,9 @@ return Application::configure(basePath: dirname(__DIR__))
         }
     )
     ->withMiddleware(function (Middleware $middleware) {
+        // One id per request in every log line and the X-Request-Id response header.
+        $middleware->prepend(\App\Http\Middleware\AssignRequestId::class);
+
         // Apply the API rate limiter to both /api/* and /api/v1/*.
         $middleware->throttleApi();
 

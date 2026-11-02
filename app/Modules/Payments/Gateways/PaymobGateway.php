@@ -196,6 +196,14 @@ class PaymobGateway implements PaymentGateway
         $pending = filter_var($data['pending'] ?? false, FILTER_VALIDATE_BOOLEAN);
         $success = filter_var($data['success'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
+        // The refund transaction carries the amount refunded. Another amount than requested is not
+        // recorded as ours: the refund is reconciled from the transaction's refunded total instead.
+        if ($success && isset($data['amount_cents']) && (int) $data['amount_cents'] !== $body['amount_cents']) {
+            return new GatewayRefundResult(false, providerRefundId: isset($data['id']) ? (string) $data['id'] : null,
+                error: "Paymob refunded {$data['amount_cents']} instead of {$body['amount_cents']} (amount_cents); reconcile before anything else.",
+                raw: Arr::except($data, ['source_data', 'payment_key_claims', 'billing_data']), uncertain: true);
+        }
+
         return new GatewayRefundResult(
             succeeded: $success && !$pending,
             pending: $pending,

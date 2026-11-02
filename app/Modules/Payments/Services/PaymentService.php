@@ -305,7 +305,7 @@ class PaymentService
             $confirmed = $gateway->fetchTransaction($notification->transactionId);
             if ($confirmed) {
                 if ($confirmed->transactionId !== $notification->transactionId || $confirmed->outcome !== $notification->outcome) {
-                    $event->update(['result' => PaymentEvent::RESULT_REJECTED, 'error' => 'The provider API does not confirm this notification', 'processed_at' => now()]);
+                    $this->reject($event, 'The provider API does not confirm this notification');
 
                     return;
                 }
@@ -327,7 +327,7 @@ class PaymentService
 
             if ($error = $this->mismatch($payment, $notification)) {
                 $payment->update(['metadata' => array_merge($payment->metadata ?? [], ['needs_review' => $error])]);
-                $event->update(['result' => PaymentEvent::RESULT_REJECTED, 'error' => $error, 'processed_at' => now()]);
+                $this->reject($event, $error);
 
                 return;
             }
@@ -383,8 +383,8 @@ class PaymentService
 
         // This payment pays the order: other open attempts are closed here. They may still be
         // captured at the provider; such a capture arrives as a duplicate (above) and is refunded.
-        Payment::where('order_id', $payment->order_id)->whereKeyNot($payment->id)
-            ->whereIn('status', [PaymentStatus::Pending->value, PaymentStatus::AwaitingVerification->value])->lockForUpdate()->get()
+        $this->lockOrderPayments($payment->order_id)
+            ->filter(fn (Payment $other) => $other->id !== $payment->id && in_array($other->status, [PaymentStatus::Pending, PaymentStatus::AwaitingVerification], true))
             ->each(fn (Payment $other) => $this->transition($other, PaymentStatus::Canceled, self::ACTOR_SYSTEM, null, "Order paid by {$payment->internal_reference}", [
                 'metadata' => array_merge($other->metadata ?? [], ['provider_may_still_capture' => true]),
             ]));
@@ -399,16 +399,24 @@ class PaymentService
     private function applyProviderRefund(Payment $payment, GatewayNotification $notification, PaymentEvent $event): void
     {
         $refunds = app(RefundService::class);
-        $refund = Refund::where('payment_id', $payment->id)->where('provider_refund_id', $notification->transactionId)->first()
-            ?? Refund::where('payment_id', $payment->id)->whereIn('status', [Refund::PROCESSING, Refund::UNKNOWN, Refund::PENDING])->where('method', Refund::METHOD_GATEWAY)->orderBy('id')->first();
-
+        // A void gives back everything still refundable; a refund says its amount (rarely omitted).
+        $amountKnown = $notification->outcome === GatewayNotification::VOID || $notification->amountProviderUnits !== null;
         $amountMinor = $notification->outcome === GatewayNotification::VOID || $notification->amountProviderUnits === null
             ? $payment->refundableMinor()
             : intdiv($notification->amountProviderUnits, max(1, (int) config('services.paymob.amount_factor', 1)));
 
+        // Our own request, when the provider's callback beats (or replaces) its API answer: the
+        // same amount, preferably one already sent. Never a request of another amount: marking it
+        // paid would record money that did not move (and leave the rest unpaid forever).
+        $refund = Refund::where('payment_id', $payment->id)->where('provider_refund_id', $notification->transactionId)->first()
+            ?? Refund::where('payment_id', $payment->id)->whereIn('status', [Refund::PROCESSING, Refund::UNKNOWN, Refund::PENDING])->where('method', Refund::METHOD_GATEWAY)
+                ->orderBy('id')->lockForUpdate()->get()
+                ->filter(fn (Refund $r) => !$amountKnown || Money::toMinor($r->amount) === $amountMinor)
+                ->sortBy(fn (Refund $r) => $r->status === Refund::PENDING ? 1 : 0)->first();
+
         if (!$refund) {
-            // Refunded from the provider's own dashboard: record it so our books match.
-            $refund = $refunds->requestForPayment($payment, $amountMinor, 'Refunded at the provider', null, Refund::METHOD_GATEWAY);
+            // Refunded from the provider's own dashboard: record it so our books match the provider.
+            $refund = $refunds->recordProviderRefund($payment, $amountMinor, $notification->transactionId);
         }
 
         if ($refund && $refund->status !== Refund::SUCCEEDED) {
@@ -512,7 +520,7 @@ class PaymentService
     /** Order canceled: unpaid payments are canceled; money already received is queued for refund. */
     public function onOrderCanceled(Order $order, string $actorType, ?int $actorId): void
     {
-        foreach (Payment::where('order_id', $order->id)->orderBy('id')->lockForUpdate()->get() as $payment) {
+        foreach ($this->lockOrderPayments($order->id) as $payment) {
             if (in_array($payment->status, [PaymentStatus::Pending, PaymentStatus::AwaitingVerification, PaymentStatus::Unpaid], true)) {
                 $this->transition($payment, PaymentStatus::Canceled, $actorType, $actorId, 'Order canceled', ['collection_status' => null]);
             } elseif (($refundable = $payment->refundableMinor() - $this->openRefundsMinor($payment)) > 0) {
@@ -652,6 +660,21 @@ class PaymentService
         ]);
     }
 
+    /**
+     * The order's payments, locked by primary key in id order. Callers hold the order row lock, and
+     * new attempts are only created under it, so the ids read plainly are complete. Point locks, not
+     * a locking scan: InnoDB locks every row a locking read examines, and a scan the optimizer runs
+     * over the primary key (tiny tables, "id != ?") locks other orders' payments and deadlocks with
+     * their callbacks (found by AdversarialConcurrencyTest on MySQL).
+     *
+     * @return \Illuminate\Support\Collection<int, Payment>
+     */
+    public function lockOrderPayments(int $orderId): \Illuminate\Support\Collection
+    {
+        return Payment::where('order_id', $orderId)->orderBy('id')->pluck('id')
+            ->map(fn ($id) => Payment::lockForUpdate()->find($id))->filter()->values();
+    }
+
     /** The payment that paid the order (first settled, not a duplicate capture), if any. */
     public function effectivePaidPayment(int $orderId, ?int $exceptPaymentId = null): ?Payment
     {
@@ -660,6 +683,18 @@ class PaymentService
             ->whereIn('status', [PaymentStatus::Paid->value, PaymentStatus::PartiallyRefunded->value, PaymentStatus::Refunded->value])
             ->whereNull('duplicate_of_payment_id')
             ->orderBy('id')->first();
+    }
+
+    /**
+     * A signed statement we refuse to act on (its unsigned parts disagree with our records or with
+     * the provider's API). It is kept for investigation under a key of its own, so it never takes
+     * the key of the genuine statement: a tampered copy that arrives first cannot make the real
+     * callback, or the inquiry before expiry, look like a duplicate.
+     */
+    private function reject(PaymentEvent $event, string $error): void
+    {
+        $event->update(['result' => PaymentEvent::RESULT_REJECTED, 'error' => Str::limit($error, 1000), 'processed_at' => now(),
+            'idempotency_key' => Str::limit($event->idempotency_key, 140, '').':rejected:'.Str::uuid()]);
     }
 
     public function recordInternalEvent(Payment $payment, string $type, array $payload, string $result = PaymentEvent::RESULT_PROCESSED, ?string $error = null): PaymentEvent
@@ -709,6 +744,16 @@ class PaymentService
 
         if ($notification->merchantReference && $notification->merchantReference !== $payment->internal_reference) {
             return 'Reference mismatch.';
+        }
+
+        // The provider order id is covered by the signature, the merchant reference is not: a
+        // transaction of a provider order that belongs to another of our payments never applies
+        // here, whatever reference it was given (a customer replaying their own signed callback
+        // against another order). Only a provider order we know as someone else's is refused, so
+        // nothing depends on how the provider numbers intention orders.
+        if ($notification->providerOrderId !== null && $notification->providerOrderId !== $payment->provider_order_id
+            && Payment::where('provider', $payment->provider)->where('provider_order_id', $notification->providerOrderId)->whereKeyNot($payment->id)->exists()) {
+            return "Provider order mismatch: the transaction belongs to provider order {$notification->providerOrderId} of another payment.";
         }
 
         return null;

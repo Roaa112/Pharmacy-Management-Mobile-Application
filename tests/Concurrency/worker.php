@@ -84,13 +84,70 @@ $run = match ($scenario) {
 
         return ['status' => 'delivered'];
     },
+    // The customer's own cancel request, through the HTTP kernel with their token.
+    'customer_cancel' => function () use ($app, $args) {
+        $request = Illuminate\Http\Request::create("/api/user/orders/{$args['order_id']}/cancel", 'POST', [], [], [], ['HTTP_ACCEPT' => 'application/json', 'HTTP_AUTHORIZATION' => 'Bearer '.$args['token']]);
+
+        return ['status' => $app->make(Illuminate\Contracts\Http\Kernel::class)->handle($request)->getStatusCode()];
+    },
+    'dispatch' => function () use ($args) {
+        app(OrderWorkflow::class)->transition(Order::findOrFail($args['order_id']), App\Enums\OrderStatus::OnDelivery, OrderWorkflow::ACTOR_ADMIN, $args['admin_id'] ?? null);
+
+        return ['status' => 'dispatched'];
+    },
+    // An admin pays a refund out; Paymob is faked in this process and every call to it is counted.
+    'process_refund' => function () use ($args) {
+        $calls = 0;
+        Illuminate\Support\Facades\Http::fake(['*/api/acceptance/void_refund/refund' => function () use (&$calls) {
+            $calls++;
+            usleep(200000); // a slow provider: other admins click meanwhile
+
+            return Illuminate\Support\Facades\Http::response(['id' => 99000 + $calls, 'success' => true, 'pending' => false]);
+        }]);
+        $refund = app(RefundService::class)->process(App\Models\Refund::findOrFail($args['refund_id']), $args['admin_id']);
+
+        return ['status' => $refund->status, 'calls' => $calls];
+    },
+    // The dashboard "verify with provider" (and the expiry job) asking Paymob about the payment.
+    'refresh_payment' => function () use ($args) {
+        $payment = Payment::findOrFail($args['payment_id']);
+        Illuminate\Support\Facades\Http::fake([
+            '*/api/auth/tokens' => Illuminate\Support\Facades\Http::response(['token' => 'auth-token']),
+            '*/api/acceptance/transactions/*' => Illuminate\Support\Facades\Http::response($args['transaction']),
+        ]);
+        $payment->forceFill(['provider_transaction_id' => (string) $args['transaction']['id']]);
+
+        return ['status' => app(PaymentService::class)->refreshFromProvider($payment)->status->value];
+    },
+    // payments:expire-stale while Paymob's order inquiry knows no transaction yet.
+    'expire' => function () use ($args) {
+        Illuminate\Support\Facades\Http::fake([
+            '*/api/auth/tokens' => Illuminate\Support\Facades\Http::response(['token' => 'auth-token']),
+            '*/api/ecommerce/orders/transaction_inquiry' => Illuminate\Support\Facades\Http::response([], 404),
+        ]);
+
+        return ['status' => 'expired:'.app(PaymentService::class)->expireStale()];
+    },
+    'transfer_dispatch' => function () use ($args) {
+        app(App\Modules\Inventory\Services\TransferService::class)->dispatch(App\Models\StockTransfer::findOrFail($args['transfer_id']), null);
+
+        return ['status' => 'transferred'];
+    },
+    'count_complete' => function () use ($args) {
+        app(App\Modules\Inventory\Services\StockCountService::class)->complete(App\Models\StockCount::findOrFail($args['count_id']), null);
+
+        return ['status' => 'counted'];
+    },
     default => throw new InvalidArgumentException("Unknown scenario {$scenario}"),
 };
 
 while (microtime(true) < (float) $startAt) {
     usleep(300);
 }
+// Optional offset after the barrier, to spread which side of a two-sided race arrives first.
+usleep((int) ($args['delay_ms'] ?? 0) * 1000);
 
+$started = microtime(true);
 try {
     $result = $run();
 } catch (DomainException $e) {
@@ -98,5 +155,6 @@ try {
 } catch (Throwable $e) {
     $result = ['status' => 'exception', 'class' => get_class($e), 'message' => mb_substr($e->getMessage(), 0, 300)];
 }
+$result['ms'] = (int) round((microtime(true) - $started) * 1000);
 
 echo json_encode($result), "\n";
