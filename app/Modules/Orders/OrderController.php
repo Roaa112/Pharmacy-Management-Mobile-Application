@@ -69,6 +69,9 @@ class OrderController extends Controller
             'status' => ['required', Rule::in(OrderStatus::values())],
         ]);
 
+        // Cancelling (stock, payment and points reversed) is a permission of its own.
+        \Illuminate\Support\Facades\Gate::authorize($request->status === OrderStatus::Canceled->value ? 'orders.cancel' : 'orders.update_status');
+
         try {
             $fulfilment->orderStatusFromDashboard($order, OrderStatus::from($request->status), auth('admin')->id());
         } catch (DomainException) {

@@ -103,6 +103,8 @@ class ReturnDecisionService
             if ($reversal) {
                 app(LoyaltyService::class)->recordReversal($reversal);
             }
+            // Points the customer paid part of the order with come back in the same proportion.
+            app(LoyaltyService::class)->restoreForRefund($order, $return, $alreadyRefundedMinor + $amountMinor, $adminId);
 
             // The approved amount becomes a refund to pay back (Refunds screen). The payment and the
             // order show "refunded" only once the refund has actually succeeded.
@@ -251,11 +253,7 @@ class ReturnDecisionService
 
     private function pointsStatus(Order $order): string
     {
-        if ($order->points_status === 'redeemed') {
-            return 'redeemed';
-        }
-
-        return $order->created_at->lt(app(LoyaltyService::class)->validFrom()) ? 'expired' : 'earned';
+        return app(LoyaltyService::class)->reversalStatus($order);
     }
 
     private function divideRoundHalfUp(int $numerator, int $denominator): int

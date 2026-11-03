@@ -135,7 +135,20 @@ class CheckoutService
             return response()->json(['message' => api_trans('promotions.gift_blocked'), 'code' => 'gift_unavailable', 'pricing' => $result->toArray()], 422);
         }
 
-        if (isset($input['expected_total']) && Money::toMinor($input['expected_total']) !== $result->total()) {
+        // Points paying part of the order: checked under the customer lock held above, so the same
+        // points cannot pay for two orders placed at once.
+        $pointsQuote = ['points' => 0, 'discount' => 0];
+        if (!empty($input['redeem_points'])) {
+            try {
+                $pointsQuote = $this->loyalty->quoteCheckout($user, (int) $input['redeem_points'], $result, $paymentMethod);
+            } catch (\DomainException $e) {
+                return response()->json(['message' => api_trans('points.rejected', ['reason' => $e->getMessage()]), 'code' => 'points_rejected',
+                    'reason' => $e->getMessage(), 'pricing' => $result->toArray()], 422);
+            }
+        }
+        $totalMinor = $result->total() - $pointsQuote['discount'];
+
+        if (isset($input['expected_total']) && Money::toMinor($input['expected_total']) !== $totalMinor) {
             return response()->json(['message' => api_trans('promotions.pricing_changed'), 'code' => 'pricing_changed', 'pricing' => $result->toArray()], 409);
         }
 
@@ -153,9 +166,9 @@ class CheckoutService
         $settings = Setting::current();
         $firstGift = $result->gifts[0] ?? null;
 
-        // Points are earned on the products subtotal (before delivery and coupon).
-        // (float) keeps the JSON number type the app already receives.
-        $pointsEarned = (float) $this->loyalty->pointsFor($subtotalMinor, $settings);
+        // Points earned by the loyalty settings (by default on the products subtotal, before delivery
+        // and coupon). (float) keeps the JSON number type the app already receives.
+        $pointsEarned = (float) $this->loyalty->pointsForCheckout($result, $pointsQuote['discount'], $paymentMethod->provider === Payment::PROVIDER_COD);
 
         $coupon = $result->coupon;
         $country = Country::default();
@@ -172,7 +185,9 @@ class CheckoutService
             'delivery_fee' => Money::fromMinor($deliveryMinor),
             'subtotal' => Money::fromMinor($subtotalMinor),
             'discount_amount' => Money::fromMinor($result->orderDiscount()),
-            'total_price' => Money::fromMinor($result->total()),
+            'total_price' => Money::fromMinor($totalMinor),
+            'points_redeemed' => $pointsQuote['points'],
+            'points_discount_amount' => Money::fromMinor($pointsQuote['discount']),
             'items_discount_amount' => Money::fromMinor($result->itemsDiscount()),
             'coupon_discount_amount' => Money::fromMinor($result->couponDiscount),
             'promotion_discount_amount' => Money::fromMinor($result->promotionDiscount),
@@ -223,6 +238,10 @@ class CheckoutService
         $this->snapshotPromotions($order, $result, $lineIds, $giftLineIds);
         $this->promotions->reserve($order, $result);
 
+        if ($pointsQuote['points'] > 0) {
+            $this->loyalty->applyCheckout($order, $pointsQuote);
+        }
+
         if ($address && $quote) {
             $this->fulfilment->createShipment($order->setRelation('user', $user), $address, $quote);
         }
@@ -257,6 +276,8 @@ class CheckoutService
             'applied_promotions' => array_map(fn ($a) => $result->appliedToArray($a), $result->applied),
             'currency' => $order->currency_code,
             'payment_status' => $order->payment_status,
+            'points_redeemed' => $pointsQuote['points'],
+            'points_discount' => $order->points_discount_amount,
         ], 201);
     }
 

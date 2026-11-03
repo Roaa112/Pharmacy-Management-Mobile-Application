@@ -2,8 +2,8 @@
 
 namespace App\Providers;
 
-use App\Enums\Permission;
 use App\Models\Admin;
+use App\Modules\Admin\Authorization\PermissionRegistry;
 use App\Models\Order;
 use App\Models\ProductSize;
 use App\Models\ReturnRequest;
@@ -37,10 +37,18 @@ class AppServiceProvider extends ServiceProvider
     {
         Paginator::useBootstrapFive();
 
-        // One Gate per dashboard permission; roles decide (App\Enums\AdminRole).
-        foreach (Permission::cases() as $permission) {
-            Gate::define($permission->value, fn ($user) => $user instanceof Admin && $user->hasPermission($permission->value));
+        // One Gate per permission; the admin's role (database) decides. Only admins hold any.
+        foreach (PermissionRegistry::slugs() as $slug) {
+            Gate::define($slug, fn ($user) => $user instanceof Admin && $user->hasPermission($slug));
         }
+        // The module names used before permissions were fine-grained (`can:orders`, @can('orders'))
+        // mean "may open the module".
+        foreach (PermissionRegistry::MODULES as $module => [, $viewPermission]) {
+            Gate::define($module, fn ($user) => $user instanceof Admin && $user->hasPermission($viewPermission));
+        }
+        // The import & export centre opens for anyone allowed to import or export something.
+        Gate::define('data_transfer', fn ($user) => $user instanceof Admin
+            && collect($user->permissionSlugs())->contains(fn ($slug) => PermissionRegistry::isDataTransfer($slug)));
 
         // Counts shown in the admin sidebar badges and the "needs attention" menu. Cached for a
         // minute: they are hints, and every admin page would otherwise run these queries.
@@ -52,6 +60,7 @@ class AppServiceProvider extends ServiceProvider
                 'payments_to_verify' => Order::where('payment_status', 'awaiting_verification')->where('status', '!=', 'canceled')->count(),
                 'shipments_attention' => Shipment::where('needs_attention', true)->count(),
                 'pending_refunds' => \App\Models\Refund::whereIn('status', ['pending', 'failed'])->count(),
+                'pending_redemptions' => \App\Models\LoyaltyRedemption::whereIn('status', \App\Models\LoyaltyRedemption::OPEN)->count(),
             ]));
         });
     }

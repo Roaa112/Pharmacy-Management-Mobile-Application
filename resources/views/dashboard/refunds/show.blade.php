@@ -37,6 +37,24 @@
                     <p class="text-muted">The provider did not answer when this refund was sent: it may already be paid out. It cannot be sent again until the provider's records are checked.</p>
                     <button class="btn btn-warning">Check with the provider</button>
                 </form>
+                <form method="POST" action="{{ route('dashboard.refunds.resolve', $refund) }}" class="card-body border-top">
+                    @csrf
+                    <p class="small text-secondary">If the provider's records cannot settle it, check the provider dashboard and record what it shows (another admin than the one who sent it).</p>
+                    <select name="outcome" class="form-select mb-2" required>
+                        <option value="paid_out">The provider shows it paid out</option>
+                        <option value="not_paid_out">The provider shows no such refund</option>
+                    </select>
+                    <x-admin.input name="note" label="What the provider dashboard shows" required />
+                    <button class="btn btn-outline-warning w-100">Record the provider's answer</button>
+                </form>
+            </div>
+        @elseif ($refund->status === 'processing' && $refund->provider_refund_id)
+            <div class="card mb-3">
+                <form method="POST" action="{{ route('dashboard.refunds.reconcile', $refund) }}" class="card-body">
+                    @csrf
+                    <p class="text-muted">The provider accepted this refund and is still processing it.</p>
+                    <button class="btn btn-outline-secondary">Check with the provider</button>
+                </form>
             </div>
         @endif
         @if (in_array($refund->status, ['pending', 'failed'], true))

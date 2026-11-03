@@ -5,6 +5,9 @@ namespace App\Modules\Customers;
 use App\Modules\Points\Services\LoyaltyService;
 use App\Http\Controllers\Controller;
 use App\Models\AdminAuditLog;
+use App\Models\LoyaltyLedgerEntry;
+use App\Models\LoyaltyRedemption;
+use App\Models\LoyaltyReward;
 use App\Models\Order;
 use App\Models\Setting;
 use App\Models\User;
@@ -62,11 +65,26 @@ class CustomerController extends Controller
             'returns' => $customer->returnRequests()->count(),
         ];
 
+        $filters = request()->validate([
+            'points_type' => ['nullable', \Illuminate\Validation\Rule::in(LoyaltyLedgerEntry::TYPES)],
+            'points_from' => ['nullable', 'date'],
+            'points_to' => ['nullable', 'date'],
+        ]);
+        $canSeeLoyalty = auth('admin')->user()?->can('loyalty.view');
+
         return view('dashboard.customers.show', [
             'customer' => $customer,
             'addresses' => $customer->addresses()->latest()->get(),
             'orders' => $orders,
             'summary' => $summary,
+            'loyalty' => $loyalty,
+            'pointEntries' => $canSeeLoyalty ? LoyaltyLedgerEntry::with('admin:id,name')->where('user_id', $customer->id)
+                ->when($filters['points_type'] ?? null, fn ($q, $type) => $q->where('type', $type))
+                ->when($filters['points_from'] ?? null, fn ($q, $from) => $q->where('occurred_at', '>=', \Illuminate\Support\Carbon::parse($from)->startOfDay()))
+                ->when($filters['points_to'] ?? null, fn ($q, $to) => $q->where('occurred_at', '<=', \Illuminate\Support\Carbon::parse($to)->endOfDay()))
+                ->orderByDesc('occurred_at')->orderByDesc('id')->paginate(15, ['*'], 'points_page')->withQueryString() : collect(),
+            'rewards' => $canSeeLoyalty ? LoyaltyReward::available()->orderBy('points_required')->get() : collect(),
+            'redemptions' => $canSeeLoyalty ? LoyaltyRedemption::with('reward:id,title')->where('user_id', $customer->id)->latest('id')->limit(8)->get() : collect(),
         ]);
     }
 

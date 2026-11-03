@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Refund;
 use App\Models\ReturnRequest;
+use App\Modules\Payments\Gateways\GatewayNotification;
 use App\Modules\Payments\Gateways\GatewayRefundResult;
 use App\Modules\Payments\Gateways\GatewayRegistry;
 use App\Modules\Payments\Gateways\PaymentGatewayException;
@@ -21,7 +22,9 @@ use Illuminate\Support\Str;
  * Refund lifecycle: requested (pending) -> processing (sent to the gateway) -> succeeded / failed,
  * or canceled before processing. A gateway request without a usable answer (timeout, provider
  * error) becomes "unknown": it may have been paid out, so it is reconciled with the provider's
- * record of the transaction (reconcile()) and can never be sent again blindly. Requested by an
+ * records (reconcile()) and can never be sent again blindly: it becomes "failed" (resendable)
+ * only when the provider declines it, or when a person confirms the provider never paid it
+ * (resolveUnknown()). Requested by an
  * accepted return, a canceled paid order, a duplicate capture or a provider-side refund;
  * processed by an admin with the "refunds" permission — a different admin than the requester
  * when pharmacy.refund_dual_control is on.
@@ -221,10 +224,15 @@ class RefundService
     }
 
     /**
-     * Settle an "unknown" refund from the provider's record of the payment's transaction: the
-     * provider's refunded total tells whether this refund was paid out (succeeded) or not
-     * (failed: safe to send again). When it cannot tell (other refunds in flight, partial
-     * difference, provider unreachable) the refund stays unknown for a person to check.
+     * Settle a refund whose outcome we do not know: "unknown" (sent, no usable answer) or
+     * "processing" at the provider (it answered pending). Only provider evidence moves it:
+     *  - the provider's own refund transaction (when we have its id): paid out -> succeeded,
+     *    declined -> failed (proof it did not happen, so it may be sent again), pending -> unchanged;
+     *  - otherwise the payment transaction's refunded total, as positive evidence only: it covers
+     *    this refund -> succeeded. A total that does not (yet) show it proves nothing (the
+     *    provider may still be processing it): the refund stays unknown, never becomes
+     *    resendable by itself, and a person settles it with resolveUnknown().
+     * Safe to run repeatedly and concurrently (re-checked under the locks).
      *
      * @return array{refund: Refund, outcome: string}
      */
@@ -232,7 +240,7 @@ class RefundService
     {
         $refund = $refund->fresh();
 
-        if ($refund->status !== Refund::UNKNOWN || !$refund->payment_id) {
+        if (!$this->awaitsProvider($refund) || !$refund->payment_id) {
             return ['refund' => $refund, 'outcome' => 'not_unknown'];
         }
 
@@ -243,30 +251,51 @@ class RefundService
             return ['refund' => $refund, 'outcome' => 'cannot_check'];
         }
 
+        // Provider calls outside the transaction (HTTP).
         try {
-            $transaction = $gateway->fetchTransaction($payment->provider_transaction_id);
+            $own = $refund->provider_refund_id ? $gateway->fetchTransaction($refund->provider_refund_id) : null;
+            $transaction = $own ? null : $gateway->fetchTransaction($payment->provider_transaction_id);
         } catch (PaymentGatewayException) {
             return ['refund' => $refund, 'outcome' => 'provider_unreachable'];
         }
 
-        if ($transaction?->refundedAmountProviderUnits === null) {
+        if (!$own && $transaction?->refundedAmountProviderUnits === null) {
             return ['refund' => $refund, 'outcome' => 'cannot_check'];
         }
 
-        $providerRefundedMinor = intdiv($transaction->refundedAmountProviderUnits, max(1, (int) config('services.paymob.amount_factor', 1)));
-
-        return DB::transaction(function () use ($refund, $payment, $providerRefundedMinor, $adminId) {
+        return DB::transaction(function () use ($refund, $payment, $own, $transaction, $adminId) {
             Order::lockForUpdate()->find($refund->order_id);
             $refund = Refund::lockForUpdate()->findOrFail($refund->id);
             $payment = Payment::lockForUpdate()->findOrFail($payment->id);
 
-            if ($refund->status !== Refund::UNKNOWN) {
-                return ['refund' => $refund, 'outcome' => 'not_unknown'];
+            if (!$this->awaitsProvider($refund)) {
+                return ['refund' => $refund, 'outcome' => 'not_unknown']; // settled meanwhile (another admin, a callback)
             }
 
             $recordedMinor = Money::toMinor($payment->refunded_amount);
-            $amountMinor = Money::toMinor($refund->amount);
-            $note = ['reconciled_at' => now()->toIso8601String(), 'provider_refunded' => Money::fromMinor($providerRefundedMinor), 'recorded_refunded' => Money::fromMinor($recordedMinor)];
+            $note = ['reconciled_at' => now()->toIso8601String(), 'recorded_refunded' => Money::fromMinor($recordedMinor)];
+
+            if ($own) {
+                $note += ['provider_refund_status' => $own->outcome];
+
+                if (in_array($own->outcome, [GatewayNotification::REFUND, GatewayNotification::VOID, GatewayNotification::SUCCESS], true)) {
+                    $refund->update(['metadata' => array_merge($refund->metadata ?? [], $note + ['reconcile' => 'provider refund paid out'])]);
+
+                    return ['refund' => $this->markSucceeded($refund, $refund->provider_refund_id, $adminId), 'outcome' => 'succeeded'];
+                }
+                if ($own->outcome === GatewayNotification::FAILED) {
+                    $refund->update(['status' => Refund::FAILED, 'failure_reason' => Str::limit('The provider declined this refund: '.$own->failureReason, 250),
+                        'metadata' => array_merge($refund->metadata ?? [], $note + ['reconcile' => 'provider refund declined'])]);
+
+                    return ['refund' => $refund->fresh(), 'outcome' => 'failed'];
+                }
+                $refund->update(['metadata' => array_merge($refund->metadata ?? [], $note + ['reconcile' => 'provider still processing'])]);
+
+                return ['refund' => $refund, 'outcome' => 'still_processing'];
+            }
+
+            $providerRefundedMinor = intdiv($transaction->refundedAmountProviderUnits, max(1, (int) config('services.paymob.amount_factor', 1)));
+            $note += ['provider_refunded' => Money::fromMinor($providerRefundedMinor)];
 
             if ($this->inFlightMinor($payment, $refund->id) > 0) {
                 $refund->update(['metadata' => array_merge($refund->metadata ?? [], $note + ['reconcile' => 'other refunds in flight'])]);
@@ -274,23 +303,62 @@ class RefundService
                 return ['refund' => $refund, 'outcome' => 'ambiguous'];
             }
 
-            if ($providerRefundedMinor >= $recordedMinor + $amountMinor) {
+            if ($providerRefundedMinor >= $recordedMinor + Money::toMinor($refund->amount)) {
                 $refund->update(['metadata' => array_merge($refund->metadata ?? [], $note + ['reconcile' => 'paid out'])]);
 
                 return ['refund' => $this->markSucceeded($refund, null, $adminId), 'outcome' => 'succeeded'];
             }
 
-            if ($providerRefundedMinor <= $recordedMinor) {
-                $refund->update(['status' => Refund::FAILED, 'failure_reason' => 'The provider shows no refund for this request; it can be sent again.',
-                    'metadata' => array_merge($refund->metadata ?? [], $note + ['reconcile' => 'not paid out'])]);
+            // Not visible (yet). Absence is not proof: the provider may still be processing it.
+            $partial = $providerRefundedMinor > $recordedMinor;
+            $refund->update(['metadata' => array_merge($refund->metadata ?? [], $note + ['reconcile' => $partial ? 'partial difference' : 'not seen at the provider yet'])]);
 
-                return ['refund' => $refund->fresh(), 'outcome' => 'failed'];
+            return ['refund' => $refund, 'outcome' => $partial ? 'ambiguous' : 'not_seen'];
+        }, 3);
+    }
+
+    /**
+     * A person settles an unknown refund after checking the provider's dashboard: paid out
+     * (recorded as succeeded) or not paid out (failed, so it can be sent again or canceled).
+     * Never the admin who sent it when dual control is on; the note is kept on the refund.
+     */
+    public function resolveUnknown(Refund $refund, bool $paidOut, int $adminId, string $note): Refund
+    {
+        if (trim($note) === '') {
+            throw new DomainException('Explain what the provider dashboard shows.');
+        }
+
+        return DB::transaction(function () use ($refund, $paidOut, $adminId, $note) {
+            Order::lockForUpdate()->find($refund->order_id);
+            $refund = Refund::lockForUpdate()->findOrFail($refund->id);
+
+            if ($refund->status !== Refund::UNKNOWN) {
+                throw new DomainException("Refund {$refund->reference} is {$refund->status}; only an unknown refund is settled by hand.");
+            }
+            if (config('pharmacy.refund_dual_control') && $refund->processed_by && $refund->processed_by === $adminId) {
+                throw new DomainException('Separation of duties: you sent this refund, so another admin must confirm what the provider shows.');
             }
 
-            $refund->update(['metadata' => array_merge($refund->metadata ?? [], $note + ['reconcile' => 'partial difference'])]);
+            $metadata = array_merge($refund->metadata ?? [], ['resolved_by' => $adminId, 'resolved_at' => now()->toIso8601String(),
+                'resolution' => $paidOut ? 'paid out' : 'not paid out', 'resolution_note' => Str::limit($note, 250)]);
 
-            return ['refund' => $refund, 'outcome' => 'ambiguous'];
+            if ($paidOut) {
+                $refund->update(['metadata' => $metadata]);
+
+                return $this->markSucceeded($refund, null, $adminId, Str::limit($note, 100));
+            }
+
+            $refund->update(['status' => Refund::FAILED, 'metadata' => $metadata,
+                'failure_reason' => Str::limit('Confirmed not paid out at the provider: '.$note, 250)]);
+
+            return $refund->fresh();
         }, 3);
+    }
+
+    /** Sent to the provider without a final answer: unknown, or processing with the provider's refund id. */
+    private function awaitsProvider(Refund $refund): bool
+    {
+        return $refund->status === Refund::UNKNOWN || ($refund->status === Refund::PROCESSING && filled($refund->provider_refund_id));
     }
 
     public function cancel(Refund $refund, int $adminId, string $reason): Refund

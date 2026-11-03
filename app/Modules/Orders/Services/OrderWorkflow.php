@@ -5,13 +5,13 @@ namespace App\Modules\Orders\Services;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentStatus;
 use App\Enums\ShipmentStatus;
-use App\Models\LoyaltyLedgerEntry;
 use App\Models\Order;
 use App\Models\OrderStatusHistory;
 use App\Models\Shipment;
 use App\Models\ShipmentEvent;
 use App\Models\Payment;
 use App\Modules\Inventory\Services\InventoryService;
+use App\Modules\Points\Services\LoyaltyService;
 use App\Modules\Payments\Services\PaymentService;
 use App\Modules\Promotions\Services\PromotionLifecycle;
 use App\Support\Money;
@@ -68,7 +68,8 @@ class OrderWorkflow
             if ($to === OrderStatus::Canceled) {
                 $this->restoreStock($order, $actorType === self::ACTOR_ADMIN ? $actorId : null);
                 $this->cancelOpenShipments($order);
-                $this->reverseLoyaltyOnCancel($order, $actorType === self::ACTOR_ADMIN ? $actorId : null);
+                // Points used on the order come back; points it earned are reversed (LoyaltyService).
+                app(LoyaltyService::class)->onOrderCanceled($order, $actorType === self::ACTOR_ADMIN ? $actorId : null);
                 app(PaymentService::class)->onOrderCanceled($order, $actorType, $actorId);
                 // Promotion and coupon uses go back (flash sale units count from live orders only).
                 app(PromotionLifecycle::class)->release($order);
@@ -87,6 +88,11 @@ class OrderWorkflow
 
             $order->status = $to->value;
             $order->save();
+
+            if ($to === OrderStatus::Completed) {
+                // Completion can be what makes the earned points usable (loyalty settings).
+                app(LoyaltyService::class)->onOrderCompleted($order);
+            }
 
             OrderStatusHistory::create([
                 'order_id' => $order->id,
@@ -157,20 +163,5 @@ class OrderWorkflow
                 // A provider that could not withdraw it still has the parcel: a person must follow up.
                 $shipment->update(['status' => ShipmentStatus::Canceled->value, 'needs_attention' => !$withdrawn]);
             });
-    }
-
-    /** Canceled orders never count for points; the ledger records that the earn is void. */
-    private function reverseLoyaltyOnCancel(Order $order, ?int $adminId): void
-    {
-        $remaining = (int) $order->points_earned - (int) $order->pointReversals()->sum('points');
-
-        if ($remaining <= 0) {
-            return;
-        }
-
-        LoyaltyLedgerEntry::firstOrCreate(
-            ['type' => LoyaltyLedgerEntry::REVERSE, 'order_id' => $order->id, 'reference_type' => 'order_cancellation', 'reference_id' => $order->id],
-            ['user_id' => $order->user_id, 'points' => -$remaining, 'admin_id' => $adminId, 'occurred_at' => now()],
-        );
     }
 }

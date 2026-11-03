@@ -103,6 +103,32 @@ class HealthReminderService
         };
     }
 
+    /**
+     * Reminders whose job was lost (still "sending" long after it was queued) or whose worker died
+     * mid-send ("delivering" past the claim timeout) are queued again; the job's claim decides who
+     * sends. One whose attempts are used up is recorded as failed. Returns how many were requeued.
+     */
+    public function recoverStale(): int
+    {
+        $cutoff = now()->subMinutes(NotificationDelivery::CLAIM_TIMEOUT_MINUTES);
+
+        NotificationDelivery::where('status', NotificationDelivery::STATUS_DELIVERING)->where('claimed_at', '<', $cutoff)
+            ->where('attempts', '>=', NotificationDelivery::MAX_ATTEMPTS)
+            ->update(['status' => NotificationDelivery::STATUS_FAILED, 'error' => 'No worker finished sending it', 'updated_at' => now()]);
+
+        $ids = NotificationDelivery::where('attempts', '<', NotificationDelivery::MAX_ATTEMPTS)
+            ->where(fn ($q) => $q->where(fn ($q) => $q->where('status', NotificationDelivery::STATUS_SENDING)->where('updated_at', '<', $cutoff))
+                ->orWhere(fn ($q) => $q->where('status', NotificationDelivery::STATUS_DELIVERING)->where('claimed_at', '<', $cutoff)))
+            ->orderBy('id')->limit(500)->pluck('id');
+
+        foreach ($ids as $id) {
+            NotificationDelivery::whereKey($id)->where('status', NotificationDelivery::STATUS_SENDING)->update(['updated_at' => now()]);
+            SendHealthReminder::dispatch($id);
+        }
+
+        return $ids->count();
+    }
+
     private function claim(int $userId, string $type, string $referenceType, int $referenceId, string $occurrence): bool
     {
         try {

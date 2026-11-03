@@ -91,7 +91,11 @@ class MigrationBackfillTest extends TestCase
         $this->assertSame(1, DB::table('order_status_histories')->where('order_id', $orderId)->count());
 
         // Points history went into the ledger.
-        $this->assertSame([['earn', 10], ['redeem', -10]], DB::table('loyalty_ledger')->where('order_id', $orderId)->orderBy('id')->get()->map(fn ($e) => [$e->type, (int) $e->points])->all());
+        $this->assertSame([['earned', 10], ['redeemed', -10]], DB::table('loyalty_ledger')->where('order_id', $orderId)->orderBy('id')->get()->map(fn ($e) => [$e->type, (int) $e->points])->all());
+        // ...and the earn became a lot the redemption fully used, with the allocation recorded.
+        $lot = DB::table('loyalty_ledger')->where('order_id', $orderId)->where('type', 'earned')->first();
+        $this->assertSame([0, 'depleted', "earned:order:{$orderId}"], [(int) $lot->remaining_points, $lot->status, $lot->idempotency_key]);
+        $this->assertSame(10, (int) DB::table('loyalty_ledger_allocations')->where('lot_id', $lot->id)->sum('points'));
 
         // Existing admins and users keep working; health content is seeded.
         $this->assertSame(1, (int) DB::table('users')->where('id', $userId)->value('is_active'));

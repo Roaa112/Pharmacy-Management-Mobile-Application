@@ -360,7 +360,12 @@ class CartController extends Controller
             $cartItem->total_price = Money::fromMinor(Money::toMinor($finalPrice) * $cartItem->product_quantity);
         }
 
-        $cartItem->save();
+        try {
+            $cartItem->save();
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            // Another request just added the new size as its own line: one line per size; reload and retry.
+            return response()->json(['success' => false, 'message' => api_trans('cart.changed'), 'code' => 'cart_changed'], 409);
+        }
 
         [$result, $changes] = $this->repriceCart($user);
 

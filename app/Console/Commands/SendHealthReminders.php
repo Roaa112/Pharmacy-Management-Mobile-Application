@@ -23,6 +23,11 @@ class SendHealthReminders extends Command
             $this->info('Medication reminders queued: '.$reminders->queueMedicationReminders());
         }
 
+        if ($all || $this->option('medications')) {
+            // Every few minutes: reminders whose job was lost or whose worker died are queued again.
+            $this->info('Reminders requeued: '.$reminders->recoverStale());
+        }
+
         return self::SUCCESS;
     }
 }

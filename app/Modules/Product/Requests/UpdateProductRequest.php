@@ -17,8 +17,8 @@ class UpdateProductRequest extends FormRequest
             'sizes' => 'nullable|array|min:1',
             'sizes.*.id' => 'nullable|integer',
             'sizes.*.size' => 'nullable|string|max:50',
-            'sizes.*.price' => 'nullable|numeric|min:0',
-            'sizes.*.stock' => 'nullable|integer|min:0',
+            'sizes.*.price' => 'nullable|numeric|min:0|decimal:0,2|max:99999999.99',
+            'sizes.*.stock' => 'nullable|integer|min:0|max:1000000',
             'sizes.*.stock_original' => 'nullable|integer|min:0',
 
             'rate' => 'nullable|numeric|between:0,5',

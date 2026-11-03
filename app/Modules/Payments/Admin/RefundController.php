@@ -37,7 +37,7 @@ class RefundController extends Controller
     /** A refund not linked to a return (goodwill, overcharge...), against a received payment. */
     public function store(Request $request, Payment $payment, RefundService $refunds)
     {
-        $data = $request->validate(['amount' => 'required|numeric|min:0.01', 'reason' => 'required|string|max:250']);
+        $data = $request->validate(['amount' => 'required|numeric|min:0.01|decimal:0,2|max:9999999999.99', 'reason' => 'required|string|max:250']);
 
         try {
             $refund = $refunds->requestForPayment($payment, Money::toMinor($data['amount']), $data['reason'], auth('admin')->id());
@@ -77,11 +77,30 @@ class RefundController extends Controller
 
         return redirect()->back()->with(in_array($outcome, ['succeeded', 'failed'], true) ? 'success' : 'error', match ($outcome) {
             'succeeded' => 'The provider confirms the refund was paid out.',
-            'failed' => 'The provider shows no refund for this request; it can be sent again.',
+            'failed' => 'The provider declined this refund; it can be sent again.',
+            'still_processing' => 'The provider is still processing this refund; check again later.',
+            'not_seen' => 'The provider does not show this refund yet. It may still be processing: check the provider dashboard before confirming it was not paid out.',
             'not_unknown' => 'This refund does not need reconciling.',
             'provider_unreachable' => 'The provider could not be reached; try again later.',
             default => 'The provider\'s records do not settle this refund; check it in the provider dashboard.',
         });
+    }
+
+    /** A person confirms, from the provider's dashboard, whether an unknown refund was paid out. */
+    public function resolve(Request $request, Refund $refund, RefundService $refunds)
+    {
+        $data = $request->validate(['outcome' => 'required|in:paid_out,not_paid_out', 'note' => 'required|string|max:250']);
+
+        try {
+            $refund = $refunds->resolveUnknown($refund, $data['outcome'] === 'paid_out', auth('admin')->id(), $data['note']);
+        } catch (DomainException $e) {
+            return redirect()->back()->with('error', $e->getMessage());
+        }
+
+        AdminAuditLog::record('refund.resolve', $refund, ['outcome' => $data['outcome'], 'note' => $data['note'], 'status' => $refund->status]);
+
+        return redirect()->back()->with('success', $refund->status === Refund::SUCCEEDED
+            ? 'Recorded as paid out.' : 'Recorded as not paid out: it can be sent again or canceled.');
     }
 
     public function cancel(Request $request, Refund $refund, RefundService $refunds)

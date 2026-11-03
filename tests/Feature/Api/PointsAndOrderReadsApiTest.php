@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\ReturnRequest;
 use App\Models\Setting;
 use App\Models\User;
+use App\Modules\Points\Services\LoyaltyService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\BuildsShop;
@@ -27,19 +28,28 @@ class PointsAndOrderReadsApiTest extends TestCase
         Sanctum::actingAs($this->customer);
     }
 
+    /** An order with points as the programme records them (a ledger lot), redeemed / canceled / backdated on request. */
     private function orderWithPoints(int $points, string $pointsStatus = 'earned', string $status = 'completed', ?string $createdAt = null): Order
     {
-        $order = $this->makeOrder($this->customer, $this->makeSize(), status: $status);
-        $order->forceFill(['points_earned' => $points, 'points_status' => $pointsStatus, 'created_at' => $createdAt ?? now()])->save();
+        $order = $this->makeOrder($this->customer, $this->makeSize(), status: $status === 'canceled' ? 'pending' : $status);
+        $this->earnPoints($order, $points, earnedAt: $createdAt ? \Illuminate\Support\Carbon::parse($createdAt) : null);
 
-        return $order;
+        if ($pointsStatus === 'redeemed') {
+            app(LoyaltyService::class)->redeem([$order->id], null);
+        }
+        if ($status === 'canceled') {
+            $order->forceFill(['status' => 'canceled'])->save();
+            app(LoyaltyService::class)->onOrderCanceled($order, null);
+        }
+
+        return $order->fresh();
     }
 
     private function reverse(Order $order, int $points): void
     {
         $return = ReturnRequest::create(['user_id' => $order->user_id, 'order_id' => $order->id, 'reason' => 'damaged', 'status' => 'accepted']);
 
-        LoyaltyPointReversal::create([
+        $reversal = LoyaltyPointReversal::create([
             'order_id' => $order->id,
             'user_id' => $order->user_id,
             'return_request_id' => $return->id,
@@ -48,6 +58,7 @@ class PointsAndOrderReadsApiTest extends TestCase
             'reversed_total' => $points,
             'points_status_at_reversal' => 'earned',
         ]);
+        app(LoyaltyService::class)->recordReversal($reversal);
     }
 
     public function test_valid_expired_and_consumed_points_are_split_correctly(): void
@@ -56,8 +67,7 @@ class PointsAndOrderReadsApiTest extends TestCase
         $this->orderWithPoints(7, createdAt: now()->subDays(40)->toDateTimeString());
         $this->orderWithPoints(5, pointsStatus: 'redeemed');
         $this->orderWithPoints(9, status: 'canceled');
-        $other = $this->makeOrder(User::factory()->create(), $this->makeSize());
-        $other->forceFill(['points_earned' => 100, 'points_status' => 'earned'])->save();
+        $this->earnPoints($this->makeOrder(User::factory()->create(), $this->makeSize()), 100);
 
         $this->getJson('/api/user/points/valid')
             ->assertOk()

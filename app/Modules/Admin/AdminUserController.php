@@ -2,22 +2,44 @@
 
 namespace App\Modules\Admin;
 
-use App\Enums\AdminRole;
 use App\Http\Controllers\Controller;
 use App\Models\Admin;
-use App\Models\AdminAuditLog;
+use App\Models\Permission;
+use App\Modules\Admin\Services\AdminAccountService;
+use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
 
-/** Dashboard accounts and their roles ("admins" permission). */
+/** Dashboard accounts and their roles. The rules live in AdminAccountService. */
 class AdminUserController extends Controller
 {
+    public function __construct(private AdminAccountService $accounts)
+    {
+    }
+
     public function index()
     {
+        $actor = auth('admin')->user();
+
         return view('dashboard.admins.index', [
-            'admins' => Admin::orderBy('name')->get(),
-            'roles' => AdminRole::cases(),
+            'admins' => Admin::with('roleModel')->orderBy('name')->get(),
+            'roles' => $this->accounts->assignableRoles($actor),
+            'canAssign' => $actor->can('roles.assign'),
+        ]);
+    }
+
+    /** One account and what it can actually do (its role's active permissions, by module). */
+    public function show(Admin $admin)
+    {
+        $admin->load('roleModel');
+        $granted = $admin->permissionSlugs();
+
+        return view('dashboard.admins.show', [
+            'admin' => $admin,
+            'permissions' => Permission::whereIn('slug', $granted)->orderBy('module')->orderBy('slug')->get()->groupBy('module'),
+            'roles' => $this->accounts->assignableRoles(auth('admin')->user()),
+            'canAssign' => auth('admin')->user()->can('roles.assign'),
         ]);
     }
 
@@ -28,12 +50,14 @@ class AdminUserController extends Controller
             'email' => 'required|email|max:255|unique:admins,email',
             'phone' => 'nullable|string|max:30',
             'password' => ['required', Password::min(10)],
-            'role' => ['required', Rule::in(AdminRole::values())],
+            'role' => ['required', 'string', Rule::exists('roles', 'slug')],
         ]);
 
-        $admin = Admin::create($data);
-        $admin->forceFill(['role' => $data['role'], 'is_active' => true])->save();
-        AdminAuditLog::record('admin.create', $admin, ['email' => $admin->email, 'role' => $data['role']]);
+        try {
+            $this->accounts->create(auth('admin')->user(), $data);
+        } catch (DomainException $e) {
+            return redirect()->back()->withInput($request->except('password'))->with('error', $e->getMessage());
+        }
 
         return redirect()->back()->with('success', 'Admin account created.');
     }
@@ -43,32 +67,17 @@ class AdminUserController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:255',
             'phone' => 'nullable|string|max:30',
-            'role' => ['required', Rule::in(AdminRole::values())],
+            'role' => ['nullable', 'string', Rule::exists('roles', 'slug')],
             'is_active' => 'nullable|boolean',
             'password' => ['nullable', Password::min(10)],
         ]);
+        $data['is_active'] = $request->boolean('is_active');
 
-        $isActive = $request->boolean('is_active');
-        $removesLastSuperAdmin = $admin->roleEnum() === AdminRole::SuperAdmin
-            && ($data['role'] !== AdminRole::SuperAdmin->value || !$isActive)
-            && Admin::where('role', AdminRole::SuperAdmin->value)->where('is_active', true)->whereKeyNot($admin->id)->doesntExist();
-
-        if ($removesLastSuperAdmin) {
-            return redirect()->back()->with('error', 'There must always be at least one active super admin.');
+        try {
+            $this->accounts->update(auth('admin')->user(), $admin, $data);
+        } catch (DomainException $e) {
+            return redirect()->back()->with('error', $e->getMessage());
         }
-
-        $before = $admin->only(['name', 'role', 'is_active']);
-        $admin->fill(['name' => $data['name'], 'phone' => $data['phone'] ?? $admin->phone]);
-        if (!empty($data['password'])) {
-            $admin->password = $data['password'];
-        }
-        $admin->forceFill(['role' => $data['role'], 'is_active' => $isActive])->save();
-
-        AdminAuditLog::record('admin.update', $admin, [
-            'before' => $before,
-            'after' => $admin->only(['name', 'role', 'is_active']),
-            'password_changed' => !empty($data['password']),
-        ]);
 
         return redirect()->back()->with('success', 'Admin account saved.');
     }

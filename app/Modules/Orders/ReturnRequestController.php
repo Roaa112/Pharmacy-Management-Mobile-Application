@@ -25,7 +25,7 @@ public function store(Request $request)
         'order_id' => 'required|integer',
         'reason' => 'required|string|max:255',
         'note' => 'nullable|string|max:2000',
-        'refund_amount' => 'nullable|numeric|min:0',
+        'refund_amount' => 'nullable|numeric|min:0|max:99999999.99',
         'refund_method' => 'nullable|string|max:255',
         'address' => 'nullable|string|max:255',
         'images' => 'nullable|array|max:10',
@@ -169,7 +169,7 @@ public function cancel($id)
     public function accept(Request $request, $id, ReturnDecisionService $decisions)
     {
         $request->validate([
-            'approved_amount' => 'nullable|numeric|min:0',
+            'approved_amount' => 'nullable|numeric|min:0|decimal:0,2|max:99999999.99',
             'quantities' => 'nullable|array',
             'quantities.*' => 'nullable|integer|min:0',
         ]);

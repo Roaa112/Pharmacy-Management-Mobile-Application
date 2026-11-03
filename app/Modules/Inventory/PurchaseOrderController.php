@@ -48,7 +48,7 @@ class PurchaseOrderController extends Controller
             'lines' => 'required|array|min:1',
             'lines.*.product_size_id' => 'required|integer|exists:product_sizes,id',
             'lines.*.quantity' => 'required|integer|min:1',
-            'lines.*.unit_cost' => 'required|numeric|min:0',
+            'lines.*.unit_cost' => 'required|numeric|min:0|decimal:0,2|max:9999999999.99',
         ]);
 
         try {

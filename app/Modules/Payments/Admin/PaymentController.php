@@ -72,7 +72,7 @@ class PaymentController extends Controller
     /** Cash received for a COD order at the counter or from a courier (collection, not settlement). */
     public function collect(Request $request, Payment $payment, PaymentService $payments)
     {
-        $data = $request->validate(['amount' => 'required|numeric|min:0.01', 'via' => 'required|in:counter,courier', 'note' => 'nullable|string|max:250']);
+        $data = $request->validate(['amount' => 'required|numeric|min:0.01|decimal:0,2|max:9999999999.99', 'via' => 'required|in:counter,courier', 'note' => 'nullable|string|max:250']);
 
         try {
             $payments->recordCodCollection($payment, Money::toMinor($data['amount']), $data['via'], PaymentService::ACTOR_ADMIN, auth('admin')->id(), $data['note'] ?? null);

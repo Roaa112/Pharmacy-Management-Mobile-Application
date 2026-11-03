@@ -124,8 +124,10 @@ return [
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
     /*
-    | Require the current password on the logged-in "change password" endpoint.
-    | Enable once the mobile app sends `current_password`.
+    | Require proof of ownership (`current_password`, or `otp_code` from password/forgot)
+    | on the logged-in "change password" endpoint. Off: a change without proof is still
+    | accepted for older apps, but logged and emailed to the owner. Turn on as soon as every
+    | app version in use sends `current_password` (the documented API already does).
     */
     'password_change_requires_current' => (bool) env('PASSWORD_CHANGE_REQUIRES_CURRENT', false),
 

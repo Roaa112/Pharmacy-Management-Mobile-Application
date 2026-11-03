@@ -132,4 +132,26 @@ trait BuildsShop
 
         return $order->fresh();
     }
+
+    /**
+     * The order earns $points as checkout records them: orders.points_earned and a ledger lot.
+     * $usable activates the lot now (as completion or payment would); $earnedAt backdates it
+     * (its expiry follows from the validity setting).
+     */
+    protected function earnPoints(Order $order, int $points, bool $usable = true, ?\Illuminate\Support\Carbon $earnedAt = null): \App\Models\LoyaltyLedgerEntry
+    {
+        $order->forceFill(['points_earned' => $points])->save();
+        $loyalty = app(\App\Modules\Points\Services\LoyaltyService::class);
+        $lot = $loyalty->recordEarn($order->fresh());
+
+        if ($usable) {
+            $lot = $loyalty->ledger()->activate($lot, $loyalty->settings()->validityDays());
+        }
+        if ($earnedAt) {
+            $days = $loyalty->settings()->validityDays();
+            $lot->forceFill(['earned_at' => $earnedAt, 'expires_at' => $days === null ? null : $earnedAt->copy()->addDays($days)])->save();
+        }
+
+        return $lot->fresh();
+    }
 }

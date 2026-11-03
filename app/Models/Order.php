@@ -39,6 +39,8 @@ class Order extends Model
         'total_savings',
         'coupon_code',
         'pricing_snapshot',
+        'points_redeemed',
+        'points_discount_amount',
     ];
 
     protected $casts = [
@@ -107,6 +109,17 @@ class Order extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** The points this order earned (its ledger lot), if any. */
+    public function pointsLot()
+    {
+        return $this->hasOne(LoyaltyLedgerEntry::class)->whereNotNull('remaining_points')->where('type', LoyaltyLedgerEntry::EARNED);
+    }
+
+    public function loyaltyRedemption()
+    {
+        return $this->hasOne(LoyaltyRedemption::class)->where('source', LoyaltyRedemption::SOURCE_CHECKOUT);
     }
 
     public function address()

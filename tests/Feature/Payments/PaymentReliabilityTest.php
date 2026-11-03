@@ -314,13 +314,28 @@ class PaymentReliabilityTest extends TestCase
         $this->assertSame('partially_refunded', $payment->fresh()->status->value);
     }
 
-    public function test_reconciliation_marks_a_refund_that_never_happened_failed_so_it_can_be_resent(): void
+    public function test_a_refund_the_provider_does_not_show_yet_stays_unknown_until_a_person_confirms(): void
     {
         $refund = $this->paidOrderWithRefund(40);
-        $refund->update(['status' => Refund::UNKNOWN]);
+        $refund->update(['status' => Refund::UNKNOWN, 'processed_by' => $this->cashier->id]);
         Http::fake(['*/api/acceptance/transactions/9001' => Http::response($this->tx($refund->payment, ['refunded_amount_cents' => 0]))]);
 
-        $this->assertSame('failed', app(RefundService::class)->reconcile($refund)['outcome']);
+        // Absence proves nothing (the provider may still be processing it): never resendable by itself.
+        $this->assertSame('not_seen', app(RefundService::class)->reconcile($refund)['outcome']);
+        $this->assertSame(Refund::UNKNOWN, $refund->fresh()->status);
+        try {
+            app(RefundService::class)->process($refund->fresh(), $this->admin->id);
+            $this->fail('An unknown refund was sent again.');
+        } catch (DomainException) {
+        }
+
+        // The admin who sent it cannot vouch for it; another one confirms from the provider dashboard.
+        try {
+            app(RefundService::class)->resolveUnknown($refund->fresh(), false, $this->cashier->id, 'Not in the Paymob dashboard');
+            $this->fail('The sender settled their own unknown refund.');
+        } catch (DomainException) {
+        }
+        $this->assertSame(Refund::FAILED, app(RefundService::class)->resolveUnknown($refund->fresh(), false, $this->admin->id, 'Not in the Paymob dashboard')->status);
 
         Http::fake(['*/api/acceptance/void_refund/refund' => Http::response(['id' => 9100, 'success' => true, 'pending' => false])]);
         $this->assertSame(Refund::SUCCEEDED, app(RefundService::class)->process($refund->fresh(), $this->cashier->id)->status);

@@ -131,22 +131,51 @@ class UserController extends Controller
         return response()->json(['message' => 'OTP verified. You may now reset your password.']);
     }
 
+    /**
+     * Logged-in password change. Proof that the caller is the owner, not just a token holder:
+     * the current password, or a code from password/forgot (accounts without a password, or a
+     * forgotten one). Each proof is always verified when sent. With
+     * PASSWORD_CHANGE_REQUIRES_CURRENT=true one of them is mandatory; until then (apps that send
+     * neither) a change without proof is still accepted, logged, and the owner is emailed.
+     */
     public function resetPassword(Request $request)
     {
-        // current_password is always verified when sent. It becomes mandatory once the
-        // mobile app sends it (PASSWORD_CHANGE_REQUIRES_CURRENT=true).
-        $mustConfirm = config('auth.password_change_requires_current') && $request->user()->password;
+        $user = $request->user();
+        $mustProve = config('auth.password_change_requires_current') && $user->password;
 
         $request->validate([
             'email' => 'nullable|email',
-            'current_password' => [$mustConfirm ? 'required' : 'nullable', 'string', 'current_password:sanctum'],
+            'current_password' => [$mustProve ? 'required_without:otp_code' : 'nullable', 'string', 'current_password:sanctum'],
+            'otp_code' => [$mustProve ? 'required_without:current_password' : 'nullable', 'digits:6'],
             'password' => 'required|string|confirmed|min:8',
         ]);
 
-        $user = $request->user();
+        if ($request->filled('otp_code') && !$request->filled('current_password')
+            && !$this->findUserWithValidOtp($user->email, (string) $request->otp_code)) {
+            return response()->json(['message' => 'Invalid or expired OTP.', 'errors' => ['otp_code' => ['Invalid or expired OTP.']]], 422);
+        }
+
+        $proven = $request->filled('current_password') || $request->filled('otp_code');
 
         $user->password = Hash::make($request->password);
         $user->save();
+        if ($request->filled('otp_code')) {
+            // The code is used once (written directly: the user model may predate the code).
+            User::whereKey($user->id)->update(['otp_code' => null, 'otp_expires_at' => null]);
+        }
+
+        if (!$proven) {
+            // Compatibility mode: nothing proved the caller is the owner. Never silent.
+            Log::warning('Password changed without current password or OTP', [
+                'user_id' => $user->id, 'ip' => $request->ip(),
+                'token_id' => $user->currentAccessToken() instanceof PersonalAccessToken ? $user->currentAccessToken()->id : null,
+            ]);
+            try {
+                Mail::to($user->email)->send(new \App\Mail\PasswordChanged($user->name));
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
 
         // Sign out every other device; keep the session that made this change.
         $currentToken = $user->currentAccessToken();

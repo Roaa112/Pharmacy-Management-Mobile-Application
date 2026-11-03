@@ -230,6 +230,9 @@ class PurchasingService
     public function dispatchReturn(SupplierReturn $return, ?int $adminId): SupplierReturn
     {
         return DB::transaction(function () use ($return, $adminId) {
+            // Supplier first (the lock supplier payments take): the credit and a payment checked
+            // against the balance cannot interleave.
+            Supplier::lockForUpdate()->find(SupplierReturn::whereKey($return->id)->value('supplier_id'));
             $return = SupplierReturn::lockForUpdate()->findOrFail($return->id);
 
             if ($return->status !== SupplierReturn::DRAFT) {
@@ -267,30 +270,49 @@ class PurchasingService
     }
 
     /**
-     * A payment to a supplier, on account or against one of its invoices. Under the invoice (or
-     * supplier) row lock, so payments submitted at once cannot both pass the "left on the
-     * invoice" check; a repeated request_key (the form's one-time key) returns the payment
-     * already recorded instead of a second one.
+     * A payment to a supplier, against one of its invoices or on account.
+     *  - invoice: never more than is left on the invoice;
+     *  - on account: never more than the supplier is owed, unless the admin marks it an advance
+     *    ($data['advance']) and advances are allowed (pharmacy.supplier_advance_payments); an
+     *    advance is recorded as such (is_advance) and makes the balance a credit.
+     * Every payment of a supplier is decided under the supplier row lock (then the invoice: one
+     * lock order), so simultaneous payments cannot both pass a check; a repeated request_key (the
+     * form's one-time key) returns the payment already recorded instead of a second one.
      */
     public function recordSupplierPayment(Supplier $supplier, array $data, ?int $adminId): SupplierPayment
     {
+        $advance = (bool) ($data['advance'] ?? false);
+        unset($data['advance'], $data['is_advance']);
+
         try {
-            return DB::transaction(function () use ($supplier, $data, $adminId) {
+            return DB::transaction(function () use ($supplier, $data, $adminId, $advance) {
+                // The lock first: every read below then sees what was committed before it.
+                $supplier = Supplier::lockForUpdate()->findOrFail($supplier->id);
+
                 if (filled($data['request_key'] ?? null) && ($existing = SupplierPayment::where('request_key', $data['request_key'])->first())) {
                     return $existing;
                 }
 
+                $amountMinor = Money::toMinor($data['amount']);
+                $isAdvance = false;
+
                 if ($data['supplier_invoice_id'] ?? null) {
                     $invoice = SupplierInvoice::where('supplier_id', $supplier->id)->lockForUpdate()->findOrFail($data['supplier_invoice_id']);
-                    $paidMinor = Money::toMinor(SupplierPayment::where('supplier_invoice_id', $invoice->id)->lockForUpdate()->sum('amount'));
-                    if ($paidMinor + Money::toMinor($data['amount']) > Money::toMinor($invoice->amount)) {
+                    $paidMinor = Money::toMinor(SupplierPayment::where('supplier_invoice_id', $invoice->id)->sum('amount'));
+                    if ($paidMinor + $amountMinor > Money::toMinor($invoice->amount)) {
                         throw new DomainException('The payment is larger than what is left on that invoice.');
                     }
-                } else {
-                    Supplier::lockForUpdate()->findOrFail($supplier->id);
+                } elseif ($amountMinor > max(0, $supplier->balanceMinor())) {
+                    if (!config('pharmacy.supplier_advance_payments')) {
+                        throw new DomainException('The payment is larger than what is owed to this supplier ('.number_format(Money::fromMinor(max(0, $supplier->balanceMinor())), 2).'); advance payments are not allowed.');
+                    }
+                    if (!$advance) {
+                        throw new DomainException('The payment is larger than what is owed to this supplier ('.number_format(Money::fromMinor(max(0, $supplier->balanceMinor())), 2).'). Tick "advance payment" if it is meant as an advance.');
+                    }
+                    $isAdvance = true;
                 }
 
-                return $supplier->payments()->create($data + ['created_by' => $adminId]);
+                return $supplier->payments()->create($data + ['created_by' => $adminId, 'is_advance' => $isAdvance]);
             }, 3);
         } catch (UniqueConstraintViolationException) {
             // The same form submitted twice at the same moment: the other request recorded it.

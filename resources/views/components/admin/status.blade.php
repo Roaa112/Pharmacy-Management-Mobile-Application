@@ -54,6 +54,12 @@
         'out' => ['Out of stock', 'red'],
         'low' => ['Low stock', 'orange'],
         'ok' => ['In stock', 'green'],
+        // loyalty points, redemptions, imports and exports
+        'depleted' => ['Used', 'secondary'],
+        'void' => ['Void', 'red'],
+        'fulfilled' => ['Fulfilled', 'green'],
+        'cancelled' => ['Cancelled', 'red'],
+        'completed_with_errors' => ['Completed with errors', 'orange'],
     ];
     [$text, $color] = $map[$status] ?? [ucfirst(str_replace('_', ' ', (string) $status)), 'secondary'];
 @endphp

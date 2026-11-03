@@ -4,7 +4,9 @@
 @section('pretitle', 'Catalog')
 
 @section('actions')
-    <a href="{{ route('dashboard.products.create') }}" class="btn btn-primary"><i class="ti ti-plus me-1"></i>New product</a>
+    @can('products.import')<a href="{{ route('dashboard.data.index') }}" class="btn btn-outline-secondary"><i class="ti ti-file-import me-1"></i>Import</a>@endcan
+    @can('products.export')<a href="{{ route('dashboard.data.index', ['export' => 'products']) }}" class="btn btn-outline-secondary"><i class="ti ti-file-export me-1"></i>Export</a>@endcan
+    @can('products.create')<a href="{{ route('dashboard.products.create') }}" class="btn btn-primary"><i class="ti ti-plus me-1"></i>New product</a>@endcan
 @endsection
 
 @section('content')

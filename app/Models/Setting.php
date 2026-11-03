@@ -38,6 +38,12 @@ class Setting extends Model
         'vaccine_reminders_enabled',
         'medication_reminders_enabled',
         'coupon_release_on_cancel',
+        // Loyalty programme rules (App\Modules\Points\Services\LoyaltySettings).
+        'loyalty_enabled', 'points_never_expire', 'loyalty_min_order_amount', 'loyalty_max_points_per_order',
+        'loyalty_earn_basis', 'loyalty_earn_on_shipping', 'loyalty_discounts_reduce_points', 'loyalty_earn_on_cod',
+        'loyalty_activation', 'loyalty_point_value', 'loyalty_min_redeem_points', 'loyalty_max_redeem_points_per_order',
+        'loyalty_combine_with_discounts', 'loyalty_allow_partial_redemption', 'loyalty_allow_multiple_redemptions',
+        'loyalty_expiry_warning_days', 'loyalty_redemption_validity_days',
     ];
 
     protected $casts = [
@@ -46,6 +52,14 @@ class Setting extends Model
         'vaccine_reminders_enabled' => 'boolean',
         'medication_reminders_enabled' => 'boolean',
         'coupon_release_on_cancel' => 'boolean',
+        'loyalty_enabled' => 'boolean',
+        'points_never_expire' => 'boolean',
+        'loyalty_earn_on_shipping' => 'boolean',
+        'loyalty_discounts_reduce_points' => 'boolean',
+        'loyalty_earn_on_cod' => 'boolean',
+        'loyalty_combine_with_discounts' => 'boolean',
+        'loyalty_allow_partial_redemption' => 'boolean',
+        'loyalty_allow_multiple_redemptions' => 'boolean',
     ];
 
     protected $appends = [

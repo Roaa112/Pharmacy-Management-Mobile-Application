@@ -3,8 +3,11 @@
 namespace App\Enums;
 
 /**
- * Admin roles and what each may do. Roles are protected code (a security boundary); which admin
- * has which role is managed from the dashboard by an admin with the "admins" permission.
+ * The system roles that existed before roles moved to the database, and what each one could do
+ * then (by module). RbacSynchronizer seeds them into `roles` with the equivalent fine-grained
+ * permissions (PermissionRegistry::defaultsFor), so existing admins keep their access. From then
+ * on roles and their permissions are edited from the dashboard: this enum is the starting point
+ * only, never consulted for authorization.
  */
 enum AdminRole: string
 {
@@ -16,7 +19,7 @@ enum AdminRole: string
     case Accountant = 'accountant';
     case WarehouseManager = 'warehouse_manager';
 
-    /** @return list<string> */
+    /** @return list<string> the module permissions (App\Enums\Permission) the role had */
     public function permissions(): array
     {
         return match ($this) {
@@ -40,6 +43,19 @@ enum AdminRole: string
     public function label(): string
     {
         return ucwords(str_replace('_', ' ', $this->value));
+    }
+
+    public function description(): string
+    {
+        return match ($this) {
+            self::SuperAdmin => 'Full access, including admins, roles and health records.',
+            self::Manager => "Runs the store: everything except customers' health records and admin accounts.",
+            self::OrdersAgent => 'Orders, delivery and customers.',
+            self::HealthSpecialist => "Customers' health records and health content.",
+            self::ContentEditor => 'Catalog, marketing and health content.',
+            self::Accountant => 'Orders, refunds, payments, reports, loyalty and purchasing.',
+            self::WarehouseManager => 'Stock, warehouses and purchasing.',
+        };
     }
 
     public static function values(): array

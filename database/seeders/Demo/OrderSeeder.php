@@ -154,12 +154,16 @@ class OrderSeeder extends Seeder
 
                 $order->forceFill([
                     'status' => $status,
-                    'points_status' => $pointsStatus,
+                    // Redeemed below through the ledger, like an admin would.
+                    'points_status' => $pointsStatus === 'redeemed' ? 'earned' : $pointsStatus,
                     'completed_at' => $status === 'completed' ? now() : null,
                     'canceled_at' => $status === 'canceled' ? now() : null,
                 ])->save();
 
                 $this->seedFulfilment($order, $address, $status);
+                if ($pointsStatus === 'redeemed') {
+                    app(LoyaltyService::class)->redeem([$order->id], Admin::value('id'));
+                }
 
                 // The payment record, as checkout creates it; delivered/completed cash is collected.
                 $payments = app(PaymentService::class);
@@ -188,7 +192,14 @@ class OrderSeeder extends Seeder
             $from = $step;
         }
 
-        app(LoyaltyService::class)->recordEarn($order);
+        // The points lot, then what the workflow would have done to it (usable once completed, void if canceled).
+        $loyalty = app(LoyaltyService::class);
+        $loyalty->recordEarn($order);
+        if ($status === 'completed') {
+            $loyalty->onOrderCompleted($order);
+        } elseif ($status === 'canceled') {
+            $loyalty->onOrderCanceled($order, null);
+        }
 
         if (!$address) {
             return;

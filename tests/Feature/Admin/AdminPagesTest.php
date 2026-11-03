@@ -57,7 +57,7 @@ class AdminPagesTest extends TestCase
 
         $address = Address::create(['user_id' => $this->customer->id, 'governorate' => 'Cairo', 'city' => 'Cairo', 'street' => 'Main', 'type' => 'home', 'landmark' => 'Near the park']);
         $this->order = $this->makeOrder($this->customer, $this->size, 2, 'completed');
-        $this->order->update(['address_id' => $address->id, 'points_earned' => 5, 'notes' => 'Ring twice']);
+        $this->order->update(['address_id' => $address->id, 'notes' => 'Ring twice']);
         $this->return = ReturnRequest::create(['user_id' => $this->customer->id, 'order_id' => $this->order->id, 'reason' => 'Damaged box', 'refund_amount' => 20]);
 
         $coupon = Coupon::create(['code' => 'WELCOME10', 'discount_value' => 10, 'is_active' => true, 'start_at' => now()->subDay(), 'end_at' => now()->addMonth(), 'usage_limit' => 100]);
@@ -69,6 +69,7 @@ class AdminPagesTest extends TestCase
         OpeningAd::create(['image' => 'OpeningAdS/a.png', 'is_active' => 1]);
         DeliveryPrice::create(['governorate' => 'Cairo', 'price' => 5]);
         Setting::create(['spend_x' => '10', 'get_y' => '1', 'points_validity_days' => 30, 'phone_number' => '0100000000']);
+        $this->earnPoints($this->order, 5);
         ContactMessage::create(['name' => 'Omar', 'email' => 'omar@example.com', 'message' => 'Hello', 'user_id' => $this->customer->id]);
         BloodPressureMeasurement::create(['user_id' => $this->customer->id, 'systolic' => 120, 'diastolic' => 80, 'condition_type' => 'rest', 'measured_at' => now()]);
         Child::create(['user_id' => $this->customer->id, 'child_name' => 'Lina', 'gender' => 'أنثى', 'birth_date' => '2024-01-01']);

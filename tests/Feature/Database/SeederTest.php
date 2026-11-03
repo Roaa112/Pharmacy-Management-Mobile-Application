@@ -22,7 +22,7 @@ class SeederTest extends TestCase
         // Admin_Email / Admin_Password are not set in the test environment.
         'admins',
         // Written only by admins' own actions in the dashboard.
-        'admin_audit_logs',
+        'admin_audit_logs', 'import_runs', 'export_runs',
     ];
 
     private function appTables(): array

@@ -246,3 +246,15 @@ Route::middleware('auth:sanctum')->prefix('user')->group(function () {
     Route::get('points/expired', [ApiPointsController::class, 'getExpiredPoints']);
     Route::get('points/notvalid', [ApiPointsController::class, 'getConsumedPoints']);
 });
+
+// Loyalty programme: the signed-in customer's own points, the rewards catalog and redemptions.
+Route::middleware(['auth:sanctum', \App\Http\Middleware\SetLocaleLang::class])->prefix('user/loyalty')->group(function () {
+    Route::get('/', [ApiPointsController::class, 'balance']);
+    Route::get('history', [ApiPointsController::class, 'history']);
+    Route::get('expiring', [ApiPointsController::class, 'expiring']);
+    Route::get('rewards', [ApiPointsController::class, 'rewards']);
+    Route::get('rewards/{reward}', [ApiPointsController::class, 'reward'])->whereNumber('reward');
+    Route::post('rewards/{reward}/redeem', [ApiPointsController::class, 'redeemReward'])->whereNumber('reward')->middleware('throttle:10,1');
+    Route::get('redemptions', [ApiPointsController::class, 'redemptions']);
+    Route::get('redemptions/{redemption}', [ApiPointsController::class, 'redemption'])->whereNumber('redemption');
+});

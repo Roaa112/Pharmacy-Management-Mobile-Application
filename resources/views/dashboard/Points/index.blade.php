@@ -4,6 +4,10 @@
 @section('pretitle', 'Sales')
 @section('subtitle', 'Valid, unredeemed points per order. Redeem them when the customer uses their reward.')
 
+@section('actions')
+    <a href="{{ route('dashboard.loyalty.overview') }}" class="btn btn-outline-primary"><i class="ti ti-star me-1"></i>Loyalty programme</a>
+@endsection
+
 @section('content')
 <div class="row row-cards mb-3">
     <div class="col-sm-6 col-lg-4">
@@ -50,7 +54,7 @@
                         <td class="text-end"><span class="badge bg-yellow-lt">{{ number_format($order['points_earned']) }}</span>
                             @if ($order['points_reversed'])<div class="small text-secondary">{{ $order['points_reversed'] }} reversed by refund</div>@endif</td>
                         <td class="small">{{ \Carbon\Carbon::parse($order['created_at'])->format('M j, Y') }}</td>
-                        <td class="small">{{ \Carbon\Carbon::parse($order['expires_at'])->format('M j, Y') }}</td>
+                        <td class="small">{{ $order['expires_at'] ? \Carbon\Carbon::parse($order['expires_at'])->format('M j, Y') : 'Never' }}</td>
                         <td>
                             <form action="{{ route('dashboard.points.redeem', $order['order_id']) }}" method="POST" data-confirm="Redeem the points of order #{{ $order['order_id'] }}?">
                                 @csrf @method('PATCH')

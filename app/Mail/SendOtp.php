@@ -3,13 +3,15 @@
 namespace App\Mail;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
-class SendOtp extends Mailable implements ShouldQueue
+// Encrypted on the queue: the code must not sit in plain text in jobs / failed_jobs.
+class SendOtp extends Mailable implements ShouldQueue, ShouldBeEncrypted
 {
     use Queueable, SerializesModels;
 

@@ -71,7 +71,7 @@ class SupplierController extends Controller
             'purchase_order_id' => ['nullable', 'integer', Rule::exists('purchase_orders', 'id')->where('supplier_id', $supplier->id)],
             'invoice_date' => 'required|date',
             'due_date' => 'nullable|date|after_or_equal:invoice_date',
-            'amount' => 'required|numeric|min:0.01',
+            'amount' => 'required|numeric|min:0.01|decimal:0,2|max:9999999999.99',
             'notes' => 'nullable|string|max:1000',
         ]);
 
@@ -85,7 +85,8 @@ class SupplierController extends Controller
     {
         $data = $request->validate([
             'supplier_invoice_id' => ['nullable', 'integer', Rule::exists('supplier_invoices', 'id')->where('supplier_id', $supplier->id)],
-            'amount' => 'required|numeric|min:0.01',
+            'amount' => 'required|numeric|decimal:0,2|min:0.01|max:9999999999.99',
+            'advance' => 'nullable|boolean',
             'paid_on' => 'required|date|before_or_equal:today',
             'method' => 'nullable|string|max:30',
             'reference' => 'nullable|string|max:64',
@@ -116,7 +117,7 @@ class SupplierController extends Controller
             'lines.*.product_size_id' => 'required|integer|exists:product_sizes,id',
             'lines.*.quantity' => 'required|integer|min:1',
             'lines.*.source_bucket' => 'required|in:on_hand,damaged,quarantined',
-            'lines.*.unit_cost' => 'nullable|numeric|min:0',
+            'lines.*.unit_cost' => 'nullable|numeric|min:0|decimal:0,2|max:9999999999.99',
         ]);
 
         try {

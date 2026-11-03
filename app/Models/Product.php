@@ -37,6 +37,7 @@ class Product extends Model
         'category_id',
         'saleable_id',
         'saleable_type',
+        'code',
     ];
 
     protected $appends = [
@@ -261,6 +262,14 @@ class Product extends Model
 
     protected static function booted()
     {
+        // Every product has a stable code (imports and exports match products by it, never by name).
+        static::created(function (Product $product) {
+            if (!$product->code) {
+                $product->code = sprintf('PRD-%06d', $product->id);
+                static::whereKey($product->id)->update(['code' => $product->code]);
+            }
+        });
+
         // Sold-out products stay visible in the app with stock_status "out_of_stock" (decision D6);
         // they used to be hidden by an "available" scope. Deleted products are hidden by SoftDeletes.
 

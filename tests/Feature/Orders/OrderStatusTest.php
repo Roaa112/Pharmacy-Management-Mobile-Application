@@ -93,8 +93,10 @@ class OrderStatusTest extends TestCase
         // which made this test fail whenever the clock ticked (see docs/business-rules.md, D10).
         \App\Models\Setting::create(['points_validity_days' => 30]);
         $size = $this->makeSize();
-        $this->makeOrder($this->customer, $size)->update(['points_earned' => 10]);
-        $this->makeOrder($this->customer, $size, status: 'canceled')->update(['points_earned' => 40]);
+        $this->earnPoints($this->makeOrder($this->customer, $size), 10);
+        $canceled = $this->makeOrder($this->customer, $size);
+        $this->earnPoints($canceled, 40);
+        app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($canceled, \App\Enums\OrderStatus::Canceled, 'admin');
 
         Sanctum::actingAs($this->customer);
 

@@ -62,7 +62,8 @@ $run = match ($scenario) {
     },
     'refund_request' => fn () => ['status' => app(RefundService::class)->requestForPayment(Payment::findOrFail($args['payment_id']), $args['amount_minor'], 'Concurrent request', null) ? 'created' : 'none'],
     'supplier_payment' => fn () => ['status' => app(PurchasingService::class)->recordSupplierPayment(Supplier::findOrFail($args['supplier_id']),
-        ['supplier_invoice_id' => $args['invoice_id'], 'amount' => $args['amount'], 'paid_on' => now()->toDateString(), 'request_key' => $args['request_key']], null)->wasRecentlyCreated ? 'created' : 'existing'],
+        ['supplier_invoice_id' => $args['invoice_id'] ?? null, 'amount' => $args['amount'], 'paid_on' => now()->toDateString(), 'request_key' => $args['request_key'],
+            'advance' => $args['advance'] ?? false], null)->wasRecentlyCreated ? 'created' : 'existing'],
     'otp' => function () use ($app, $args) {
         $request = Illuminate\Http\Request::create('/api/user/password/verify-otp', 'POST', ['email' => $args['email'], 'otp_code' => $args['code']], [], [], ['REMOTE_ADDR' => $args['ip'], 'HTTP_ACCEPT' => 'application/json']);
 
@@ -137,6 +138,38 @@ $run = match ($scenario) {
         app(App\Modules\Inventory\Services\StockCountService::class)->complete(App\Models\StockCount::findOrFail($args['count_id']), null);
 
         return ['status' => 'counted'];
+    },
+    // Reconciliation of an unknown refund (Paymob says the transaction's refunded total is $args['refunded_cents']).
+    'reconcile_refund' => function () use ($args) {
+        Illuminate\Support\Facades\Http::fake([
+            '*/api/auth/tokens' => Illuminate\Support\Facades\Http::response(['token' => 'auth-token']),
+            '*/api/acceptance/transactions/*' => Illuminate\Support\Facades\Http::response($args['transaction']),
+        ]);
+
+        return ['status' => app(RefundService::class)->reconcile(App\Models\Refund::findOrFail($args['refund_id']), $args['admin_id'])['outcome']];
+    },
+    'resolve_refund' => fn () => ['status' => app(RefundService::class)->resolveUnknown(App\Models\Refund::findOrFail($args['refund_id']), $args['paid_out'], $args['admin_id'], 'Checked the dashboard')->status],
+    'redeem_points' => fn () => ['status' => 'redeemed:'.app(App\Modules\Points\Services\LoyaltyService::class)->redeem([$args['order_id']], $args['admin_id'] ?? null)],
+    // Loyalty: the same points or the same reward stock spent from several processes at once.
+    'redeem_reward' => function () use ($args) {
+        try {
+            app(App\Modules\Points\Services\RewardRedemptionService::class)->redeem(App\Models\User::findOrFail($args['user_id']),
+                App\Models\LoyaltyReward::findOrFail($args['reward_id']), 1, null, $args['key'] ?? null);
+
+            return ['status' => 'redeemed'];
+        } catch (DomainException) {
+            return ['status' => 'refused'];
+        }
+    },
+    'add_to_cart' => function () use ($app, $args) {
+        $request = Illuminate\Http\Request::create('/api/user/cart', 'POST', ['product_id' => $args['product_id'], 'product_size' => $args['size_id'], 'quantity' => $args['quantity']], [], [], ['HTTP_ACCEPT' => 'application/json', 'HTTP_AUTHORIZATION' => 'Bearer '.$args['token']]);
+
+        return ['status' => $app->make(Illuminate\Contracts\Http\Kernel::class)->handle($request)->getStatusCode()];
+    },
+    'reminder' => function () use ($args) {
+        (new App\Jobs\SendHealthReminder($args['delivery_id']))->handle();
+
+        return ['status' => App\Models\NotificationDelivery::findOrFail($args['delivery_id'])->status];
     },
     default => throw new InvalidArgumentException("Unknown scenario {$scenario}"),
 };

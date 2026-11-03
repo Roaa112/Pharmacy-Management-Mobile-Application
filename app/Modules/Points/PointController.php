@@ -4,10 +4,15 @@ namespace App\Modules\Points;
 
 use App\Http\Controllers\Controller;
 use App\Models\AdminAuditLog;
+use App\Models\LoyaltyLedgerEntry as Entry;
 use App\Models\Order;
 use App\Modules\Points\Services\LoyaltyService;
 use Illuminate\Http\Request;
 
+/**
+ * Usable points per order, and the "Redeem" button for points a customer uses in the pharmacy.
+ * The wider programme (customers, transactions, rewards, settings) is LoyaltyDashboardController.
+ */
 class PointController extends Controller
 {
     public function __construct(private LoyaltyService $loyalty)
@@ -16,24 +21,25 @@ class PointController extends Controller
 
     public function index(Request $request)
     {
-        $query = $this->loyalty->valid()
+        $query = Entry::usable()->whereNotNull('order_id')->where('type', Entry::EARNED)
             ->with('user:id,name')
             ->when($request->filled('user_name'), fn ($q) => $q->whereHas('user', fn ($u) => $u->where('name', 'like', '%'.$request->user_name.'%')))
-            ->when($request->filled('order_id'), fn ($q) => $q->where('orders.id', $request->order_id))
-            ->latest('orders.created_at');
+            ->when($request->filled('order_id'), fn ($q) => $q->where('order_id', (int) $request->order_id))
+            ->latest('id');
 
-        // Totals in SQL; only one page of orders is loaded.
-        $total = $this->loyalty->netTotal($this->loyalty->valid());
+        // Totals in SQL; only one page of lots is loaded.
+        $total = (int) Entry::usable()->sum('remaining_points');
         $page = $query->paginate(50)->withQueryString();
+        $breakdown = $this->loyalty->lotBreakdown(collect($page->items())->pluck('id')->all());
 
-        $data = collect($page->items())->map(fn (Order $order) => [
-            'order_id' => $order->id,
-            'user_name' => $order->user?->name ?? '-',
-            'display_id' => $order->display_id,
-            'points_earned' => LoyaltyService::net($order),
-            'points_reversed' => (int) $order->points_reversed,
-            'created_at' => $order->created_at->toDateTimeString(),
-            'expires_at' => $this->loyalty->expiresAt($order)->toDateTimeString(),
+        $data = collect($page->items())->map(fn (Entry $lot) => [
+            'order_id' => $lot->order_id,
+            'user_name' => $lot->user?->name ?? '-',
+            'display_id' => "طلب #{$lot->order_id}",
+            'points_earned' => (int) $lot->remaining_points,
+            'points_reversed' => $breakdown[$lot->id]['reversed'],
+            'created_at' => ($lot->earned_at ?? $lot->occurred_at)->toDateTimeString(),
+            'expires_at' => $lot->expires_at?->toDateTimeString(),
         ]);
 
         return view('dashboard.Points.index', [

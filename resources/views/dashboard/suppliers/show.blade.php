@@ -85,6 +85,9 @@
         <div class="mb-3"><label class="form-label">Invoice</label><select name="supplier_invoice_id" class="form-select"><option value="">On account</option>@foreach ($supplier->invoices as $inv)<option value="{{ $inv->id }}">{{ $inv->number }} ({{ number_format((float) $inv->amount - (float) $inv->payments_sum_amount, 2) }} left)</option>@endforeach</select></div>
         <div class="row"><x-admin.input col="col-6 mb-3" name="amount" type="number" step="0.01" min="0.01" label="Amount" required /><x-admin.input col="col-6 mb-3" name="paid_on" type="date" label="Paid on" required /></div>
         <div class="row"><x-admin.input col="col-6 mb-3" name="method" label="Method" hint="Bank transfer, cash…" /><x-admin.input col="col-6 mb-3" name="reference" label="Reference" /></div>
+        @if (config('pharmacy.supplier_advance_payments'))
+            <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="advance" value="1" id="paymentAdvance"><label class="form-check-label" for="paymentAdvance">Advance payment (on account, more than is owed)</label></div>
+        @endif
     </x-admin.modal>
     <x-admin.modal id="returnNew" title="Return goods to supplier" :action="route('dashboard.suppliers.returns.store', $supplier)" size="lg" submit="Draft return">
         <div class="mb-3"><label class="form-label required">From warehouse</label><select name="warehouse_id" class="form-select" required>@foreach ($warehouses as $w)<option value="{{ $w->id }}">{{ $w->code }} — {{ $w->name }}</option>@endforeach</select></div>

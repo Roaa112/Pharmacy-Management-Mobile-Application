@@ -658,6 +658,11 @@ class PaymentService
             'payment_verified_at' => $payment->verified_at ?? $payment->paid_at,
             'updated_at' => now(),
         ]);
+
+        // A confirmed payment can be what makes the order's earned points usable (loyalty settings).
+        if ($status === PaymentStatus::Paid) {
+            app(\App\Modules\Points\Services\LoyaltyService::class)->onOrderPaid($orderId);
+        }
     }
 
     /**

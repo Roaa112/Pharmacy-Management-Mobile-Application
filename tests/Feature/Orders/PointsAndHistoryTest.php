@@ -35,21 +35,41 @@ class PointsAndHistoryTest extends TestCase
 
     public function test_points_are_redeemed_once(): void
     {
-        $order = $this->makeOrder($this->customer, $this->makeSize());
-        $order->update(['points_earned' => 10]);
+        $order = $this->makeOrder($this->customer, $this->makeSize(), status: 'completed');
+        $this->earnPoints($order, 10);
 
         $this->redeem($order)->assertSessionHas('success');
         $this->redeem($order)->assertSessionHas('error');
 
         $this->assertSame('redeemed', $order->fresh()->points_status);
+        $this->assertSame(1, \App\Models\LoyaltyLedgerEntry::where('order_id', $order->id)->where('type', 'redeemed')->count());
+    }
+
+    public function test_points_of_an_order_not_completed_yet_are_not_redeemable_unless_the_store_allows_it(): void
+    {
+        $pending = $this->makeOrder($this->customer, $this->makeSize());
+        $this->earnPoints($pending, 10, usable: false);
+
+        // It could still be canceled (points reversed) or come back undelivered: not usable yet.
+        $this->redeem($pending)->assertSessionHas('error');
+        $this->assertSame(['earned', 0], [$pending->fresh()->points_status, \App\Models\LoyaltyLedgerEntry::where('type', 'redeemed')->count()]);
+
+        // Stores that let points be used at once switch the rule (Loyalty settings): new orders' points are usable at checkout.
+        Setting::current()->update(['loyalty_activation' => 'immediate']);
+        $immediate = $this->makeOrder($this->customer, $this->makeSize());
+        $this->earnPoints($immediate, 10, usable: false);
+        $this->redeem($immediate)->assertSessionHas('success');
+        $this->assertSame('redeemed', $immediate->fresh()->points_status);
     }
 
     public function test_points_of_canceled_or_expired_orders_cannot_be_redeemed(): void
     {
-        $canceled = $this->makeOrder($this->customer, $this->makeSize(), status: 'canceled');
-        $canceled->update(['points_earned' => 10]);
+        $canceled = $this->makeOrder($this->customer, $this->makeSize());
+        $this->earnPoints($canceled, 10);
+        $canceled->forceFill(['status' => 'canceled'])->save();
+        app(\App\Modules\Points\Services\LoyaltyService::class)->onOrderCanceled($canceled, null);
         $expired = $this->makeOrder($this->customer, $this->makeSize());
-        $expired->forceFill(['points_earned' => 10, 'created_at' => now()->subDays(31)])->save();
+        $this->earnPoints($expired, 10, earnedAt: now()->subDays(31));
 
         $this->redeem($canceled)->assertSessionHas('error');
         $this->redeem($expired)->assertSessionHas('error');

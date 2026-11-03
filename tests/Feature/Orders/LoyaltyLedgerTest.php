@@ -48,18 +48,18 @@ class LoyaltyLedgerTest extends TestCase
         $order = $this->checkout(100); // 10 points
         // Completed through the workflow: the units are dispatched and the cash recorded (refunds need received money).
         app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($order, \App\Enums\OrderStatus::Completed, 'admin', $this->admin->id);
-        $this->assertSame([['earn', 10]], $this->ledger($order));
+        $this->assertSame([['earned', 10]], $this->ledger($order));
 
         // A 30 % refund reverses 3 points.
         $return = ReturnRequest::create(['user_id' => $this->user->id, 'order_id' => $order->id, 'reason' => 'x', 'refund_amount' => 30]);
         app(ReturnDecisionService::class)->accept($return->id, null, [], $this->admin->id);
-        $this->assertSame([['earn', 10], ['reverse', -3]], $this->ledger($order));
+        $this->assertSame([['earned', 10], ['refunded', -3]], $this->ledger($order));
 
         $this->getJson('/api/user/points/valid')->assertJsonPath('valid_points_total', 7)->assertJsonPath('orders.0.points_original', 10);
         $this->actingAs($this->admin, 'admin')->get(route('dashboard.points.index'))->assertOk()->assertViewHas('valid_points_total', 7);
 
         $this->actingAs($this->admin, 'admin')->patch(route('dashboard.points.redeem', $order))->assertRedirect();
-        $this->assertSame([['earn', 10], ['reverse', -3], ['redeem', -7]], $this->ledger($order));
+        $this->assertSame([['earned', 10], ['refunded', -3], ['redeemed', -7]], $this->ledger($order));
         $this->getJson('/api/user/points/notvalid')->assertJsonPath('consumed_points_total', 7);
 
         // Redeeming twice does nothing.
@@ -96,14 +96,16 @@ class LoyaltyLedgerTest extends TestCase
     {
         $canceled = $this->checkout(100);
         app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($canceled, \App\Enums\OrderStatus::Canceled, 'admin', $this->admin->id);
-        $this->assertSame([['earn', 10], ['reverse', -10]], $this->ledger($canceled));
+        $this->assertSame([['earned', 10], ['reversed', -10]], $this->ledger($canceled));
 
+        // Points are valid for 30 days from when they became usable (here: completion, 31 days ago).
         $old = $this->checkout(200);
-        $old->forceFill(['created_at' => now()->subDays(31)])->save();
+        app(\App\Modules\Orders\Services\OrderWorkflow::class)->transition($old, \App\Enums\OrderStatus::Completed, 'admin', $this->admin->id);
+        LoyaltyLedgerEntry::where('order_id', $old->id)->firstOrFail()->forceFill(['earned_at' => now()->subDays(31), 'expires_at' => now()->subDay()])->save();
 
         $this->artisan('loyalty:record-expirations')->assertSuccessful();
         $this->artisan('loyalty:record-expirations')->assertSuccessful();
-        $this->assertSame([['earn', 20], ['expire', -20]], $this->ledger($old));
+        $this->assertSame([['earned', 20], ['expired', -20]], $this->ledger($old));
         $this->getJson('/api/user/points/expired')->assertJsonPath('expired_points_total', 20);
     }
 

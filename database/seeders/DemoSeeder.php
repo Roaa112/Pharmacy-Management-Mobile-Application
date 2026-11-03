@@ -7,6 +7,7 @@ use Database\Seeders\Demo\CatalogSeeder;
 use Database\Seeders\Demo\CustomerSeeder;
 use Database\Seeders\Demo\HealthDataSeeder;
 use Database\Seeders\Demo\InventorySeeder;
+use Database\Seeders\Demo\LoyaltySeeder;
 use Database\Seeders\Demo\MarketingSeeder;
 use Database\Seeders\Demo\PaymentsSeeder;
 use Database\Seeders\Demo\MedicationSeeder;
@@ -50,6 +51,7 @@ class DemoSeeder extends Seeder
             ReturnSeeder::class,
             InventorySeeder::class,
             PaymentsSeeder::class,
+            LoyaltySeeder::class,
             HealthDataSeeder::class,
             MedicationSeeder::class,
         ]);

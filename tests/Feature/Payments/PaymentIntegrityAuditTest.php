@@ -192,6 +192,88 @@ class PaymentIntegrityAuditTest extends TestCase
         $this->assertSame(40.0, (float) $payment->fresh()->refunded_amount);
     }
 
+    /** A refund Paymob accepted as pending (we hold its refund transaction id). */
+    private function refundPendingAtProvider(): Refund
+    {
+        $payment = $this->paidPayment();
+        $refund = app(RefundService::class)->requestForPayment($payment, 4000, 'Customer request', $this->admin->id);
+        // Paymob answers pending; a later resend (when allowed) succeeds.
+        Http::fake(['*/api/acceptance/void_refund/refund' => Http::sequence()->push(['id' => 9200, 'success' => false, 'pending' => true])
+            ->push(['id' => 9300, 'success' => true, 'pending' => false])]);
+        $refund = app(RefundService::class)->process($refund, $this->cashier->id);
+        $this->assertSame([Refund::PROCESSING, '9200'], [$refund->status, $refund->provider_refund_id]);
+
+        return $refund;
+    }
+
+    private function providerRefundTx(Payment $payment, bool $success, bool $pending): array
+    {
+        return array_replace($this->refundTx($payment, 9200, 4000), ['success' => $success, 'pending' => $pending]);
+    }
+
+    public function test_a_refund_the_provider_is_still_processing_is_never_resent(): void
+    {
+        $refund = $this->refundPendingAtProvider();
+        Http::fake(['*/api/acceptance/transactions/9200' => Http::response($this->providerRefundTx($refund->payment, false, true))]);
+
+        $this->assertSame('still_processing', app(RefundService::class)->reconcile($refund)['outcome']);
+        $this->assertSame(Refund::PROCESSING, $refund->fresh()->status);
+        $this->expectException(DomainException::class);
+        app(RefundService::class)->process($refund->fresh(), $this->admin->id);
+    }
+
+    public function test_a_refund_the_provider_paid_while_our_worker_crashed_is_recorded_once(): void
+    {
+        $refund = $this->refundPendingAtProvider();
+        $refund->update(['status' => Refund::UNKNOWN]); // the worker died before recording the answer
+        Http::fake(['*/api/acceptance/transactions/9200' => Http::response($this->providerRefundTx($refund->payment, true, false))]);
+
+        $this->assertSame('succeeded', app(RefundService::class)->reconcile($refund)['outcome']);
+        // Reconciling again (the schedule, a second admin) changes nothing.
+        $this->assertSame('not_unknown', app(RefundService::class)->reconcile($refund)['outcome']);
+
+        $this->assertSame([Refund::SUCCEEDED, 40.0], [$refund->fresh()->status, (float) $refund->payment->fresh()->refunded_amount]);
+    }
+
+    public function test_a_refund_the_provider_declined_becomes_resendable(): void
+    {
+        $refund = $this->refundPendingAtProvider();
+        Http::fake(['*/api/acceptance/transactions/9200' => Http::response($this->providerRefundTx($refund->payment, false, false))]);
+
+        $this->assertSame('failed', app(RefundService::class)->reconcile($refund)['outcome']);
+        $this->assertSame([Refund::FAILED, 0.0], [$refund->fresh()->status, (float) $refund->payment->fresh()->refunded_amount]);
+
+        $this->assertSame(Refund::SUCCEEDED, app(RefundService::class)->process($refund->fresh(), $this->cashier->id)->status);
+    }
+
+    public function test_an_unusable_provider_answer_leaves_the_refund_unknown(): void
+    {
+        $payment = $this->paidPayment();
+        $refund = app(RefundService::class)->requestForPayment($payment, 4000, 'Customer request', $this->admin->id);
+        $refund->update(['status' => Refund::UNKNOWN]);
+
+        Http::fake(['*/api/acceptance/transactions/9001' => Http::sequence()->push('upstream error', 502)->push(['id' => 9001])]); // then: no refunded total
+        $this->assertSame('provider_unreachable', app(RefundService::class)->reconcile($refund)['outcome']);
+        $this->assertSame('cannot_check', app(RefundService::class)->reconcile($refund)['outcome']);
+
+        $this->assertSame([Refund::UNKNOWN, 0.0], [$refund->fresh()->status, (float) $payment->fresh()->refunded_amount]);
+    }
+
+    public function test_an_unknown_refund_is_settled_by_hand_only_once(): void
+    {
+        $payment = $this->paidPayment();
+        $refund = app(RefundService::class)->requestForPayment($payment, 4000, 'Customer request', $this->admin->id);
+        $refund->update(['status' => Refund::UNKNOWN, 'processed_by' => $this->cashier->id]);
+
+        $this->actingAs($this->admin, 'admin')->post(route('dashboard.refunds.resolve', $refund), ['outcome' => 'paid_out', 'note' => 'Shown as refunded in Paymob'])
+            ->assertSessionHas('success');
+        $this->actingAs($this->admin, 'admin')->post(route('dashboard.refunds.resolve', $refund), ['outcome' => 'not_paid_out', 'note' => 'Again'])
+            ->assertSessionHas('error');
+
+        $this->assertSame([Refund::SUCCEEDED, 40.0], [$refund->fresh()->status, (float) $payment->fresh()->refunded_amount]);
+        $this->assertSame(1, \App\Models\AdminAuditLog::where('action', 'refund.resolve')->count());
+    }
+
     public function test_a_refund_processing_right_now_is_not_touched_by_reconciliation(): void
     {
         $payment = $this->paidPayment();

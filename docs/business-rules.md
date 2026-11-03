@@ -185,13 +185,26 @@ is projected from the latest one by `PaymentService`.
   3. reverses loyalty points in proportion to the money refunded (decision D2, section 5).
 * The order is then hidden from the customer's order list (unchanged). Revenue drops by the approved
   refund, not by the whole order (D3). The customer can still request a further partial return on it.
+* Refunds paid through Paymob: a request without a usable answer is **unknown** and is never sent
+  again by itself. It becomes **failed** (sendable again) only when Paymob declines that refund, or
+  when a second admin records, from the Paymob dashboard, that it was not paid out
+  (`refunds.resolve`, audited); it becomes **succeeded** when Paymob shows it paid out.
+  `payments:reconcile-refunds` asks Paymob every 15 minutes; a refund left "processing" by a crashed
+  worker for 30 minutes is treated as unknown.
 * When `settings.return_window_days` is set, only completed orders within that many days of
   completion can be returned. Unset = no limit (original behaviour).
 
 ## 5. Loyalty points
 
-* Earned at checkout, valid for `points_validity_days` days, redeemed by the admin.
-* Canceled orders do not count and cannot be redeemed; redeeming twice does nothing.
+The full programme (settings, lots, FIFO, rewards, redemptions) is in [loyalty.md](loyalty.md).
+
+* Points are a ledger (`loyalty_ledger`), never a stored balance. An order earns a **lot** at checkout
+  (rules on Loyalty › Settings); the lot is *pending* until the points become usable (default: when the
+  order is completed, as before), then valid for `points_validity_days` (or never, if set to never
+  expire). Redemptions take the soonest-expiring points first; expired points are refused at the
+  moment of use whatever the daily expiry run has done.
+* Canceling an order voids its earned points and gives back any points used to pay for it. Every
+  movement is keyed by its event, so repeating it (double click, retry, two admins) does nothing.
 * **Refunds (decision D2).** `orders.points_earned` is never changed. Each accepted refund writes one
   `loyalty_point_reversals` row (unique per return request, never updated or deleted):
   * point base = what was paid for products = `total_price × subtotal ÷ (subtotal + delivery)`;
@@ -199,10 +212,18 @@ is projected from the latest one by `PaymentService`.
     `points_earned` (everything once the refunds reach the base). Rounding happens once on the
     cumulative amount, so 10 % + 20 % + 70 % adds up exactly;
   * this refund's row = that target − what was already reversed.
-  * An order's remaining points = `points_earned` − its reversals; the admin points page and
-    redemption use that. If the points were already redeemed, the row is marked `redeemed` and the
-    customer profile shows them as **owed**. Offsetting the debt against future points is not
-    automatic (a business decision).
+  * The reversal is taken from the order's own lot, then from the customer's other usable points
+    (oldest first). A balance never goes negative: whatever is still missing (points already spent)
+    is recorded on the entry (`metadata.shortfall`) and shown as **owed** on the customer profile;
+    the row is marked `redeemed`. Offsetting the debt against future points is not automatic.
+  * Points the customer paid part of the order with come back in the same proportion.
+
+## 5b. Supplier payments
+
+* Against an invoice: never more than is left on it.
+* On account: never more than the supplier is owed, unless the admin ticks **advance payment**
+  (`supplier_payments.is_advance`); the balance then becomes a credit. Advances can be switched off
+  (`PHARMACY_SUPPLIER_ADVANCE_PAYMENTS=false`). A resubmitted form records the payment once.
 
 ## 6. Decisions needed
 
@@ -217,7 +238,7 @@ is projected from the latest one by `PaymentService`.
 | D7 | ~~Flash sale window?~~ **Decided:** one price everywhere; flash sale only inside its window | Implemented |
 | D8 | Admin stock edits apply the difference (correct for deliveries). Is a "physical count" mode needed that sets an exact number? | Difference |
 | D9 | Should the coupon discount the delivery fee too? Now a setting and a per-coupon choice | Yes (unchanged default) |
-| D10 | `points_validity_days = 0`: the code comment says "no expiry", but it means "expires today". | Expires today (unchanged) |
+| D10 | ~~`points_validity_days = 0`?~~ **Decided:** 0 still means "lapse the day they become usable"; "never expires" is its own setting (`points_never_expire`) | Implemented |
 | D11 | ~~Which market is the store in?~~ **Decided:** Egypt only, EGP. Delivery zones created from old production delivery prices with non-Egyptian names (e.g. Baghdad, Karbala) are kept as data; an admin should deactivate them | Egypt / EGP / Africa/Cairo |
 | D12 | ~~Brand/category gift targets?~~ **Decided:** a gift names a product (and optionally a variant); brand/category gift rules are flagged as errors and cannot be activated | Implemented |
 | D13 | Partially refunded orders are hidden from the customer's order list, but their remaining points are shown | As described |

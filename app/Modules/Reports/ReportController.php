@@ -89,9 +89,11 @@ class ReportController extends Controller
             ->get();
 
         $loyalty = [
-            'earned' => (int) $inRange()->where('status', '!=', 'canceled')->sum('points_earned'),
-            'redeemed' => (int) $inRange()->where('points_status', 'redeemed')->sum('points_earned'),
+            // From the points ledger: what moved in the period, whatever its order.
+            'earned' => (int) \App\Models\LoyaltyLedgerEntry::whereIn('type', ['earned', 'bonus'])->whereBetween('occurred_at', [$from, $to])->sum('points'),
+            'redeemed' => -(int) \App\Models\LoyaltyLedgerEntry::whereIn('type', ['redeemed', 'cancelled'])->whereBetween('occurred_at', [$from, $to])->sum('points'),
             'reversed' => (int) LoyaltyPointReversal::whereBetween('created_at', [$from, $to])->sum('points'),
+            'expired' => -(int) \App\Models\LoyaltyLedgerEntry::where('type', 'expired')->whereBetween('occurred_at', [$from, $to])->sum('points'),
         ];
 
         // Non-canceled orders per payment method, with what is still awaiting verification.

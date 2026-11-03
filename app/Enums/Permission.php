@@ -2,7 +2,11 @@
 
 namespace App\Enums;
 
-/** Dashboard permissions; each is registered as a Gate ability with the same name. */
+/**
+ * The dashboard modules. Each is also a Gate ability with the same name meaning "may open the
+ * module" (its view permission, see PermissionRegistry::MODULES); actions inside a module are
+ * checked with their own fine-grained permissions (e.g. orders.cancel).
+ */
 enum Permission: string
 {
     case Orders = 'orders';

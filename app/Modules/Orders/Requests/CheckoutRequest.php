@@ -22,6 +22,8 @@ class CheckoutRequest extends FormRequest
             // Optional: the total the app showed. When sent and different from what checkout
             // calculates now (a promotion ended, a price changed), nothing is ordered (409).
             'expected_total' => 'nullable|numeric|min:0',
+            // Optional: loyalty points to pay part of the order with (rules: Loyalty › Settings).
+            'redeem_points' => 'nullable|integer|min:1|max:100000000',
         ];
     }
 
