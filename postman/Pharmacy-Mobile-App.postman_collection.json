@@ -2161,6 +2161,13 @@
                                     "description": "Optional transfer receipt (jpeg/png/webp, max 5MB)",
                                     "src": [],
                                     "disabled": true
+                                },
+                                {
+                                    "key": "redeem_points",
+                                    "type": "text",
+                                    "value": "50",
+                                    "disabled": true,
+                                    "description": "Optional: loyalty points to pay part of the order (rules: Loyalty › Settings). Refused with 422 code points_rejected."
                                 }
                             ]
                         }

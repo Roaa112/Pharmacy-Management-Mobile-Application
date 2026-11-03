@@ -1,9 +1,13 @@
-# Import & export centre
+# Import & export
 
 Code: `app/Modules/DataTransfer` (`ImportManager`, `ExportManager`, `TemplateBuilder`, `EntityRegistry`,
 `Entities/*`, `Support/Spreadsheet` (OpenSpout, streaming), `Support/ImageFetcher`), jobs
 `ValidateImport`, `ProcessImport`, `RunExport`, models `ImportRun`, `ExportRun`.
-Dashboard: **Operations › Import & export** (visible with any import or export permission).
+Dashboard: on each data's own page (Products, Categories, Brands, Inventory, Suppliers, Cities & areas,
+Rewards, Customers, Orders, Payments, Refunds, Point transactions), the **Import / Export** buttons in the
+page header (component `x-admin.data-transfer`). They offer only that page's data and only what the
+admin's role allows; the menu next to them has the import templates and that data's **history**
+(`/dashboard/data/{entity}/history`). An export goes back to the page with a download link.
 
 ## Which data, and why
 
@@ -40,10 +44,10 @@ Formats: CSV (UTF-8 with BOM) and XLSX. Files are read and written as streams, o
    transaction**; a record that fails (even while saving, e.g. an image that cannot be downloaded) is
    rolled back completely and reported, the others go ahead. Files above
    `PHARMACY_IMPORT_SYNC_MAX_BYTES` (512 KB) run on the queue (`php artisan queue:work`); the page shows
-   progress. An import can be cancelled while pending or processing (records already written stay).
+   progress. The import page links back to its data's page and history. An import can be cancelled while pending or processing (records already written stay).
 5. **Results**: status (`pending`, `processing`, `completed`, `completed_with_errors`, `failed`,
    `cancelled`), created / updated / failed counts, result report (one line per record), error report and
-   the original file — all downloadable from **Import history**.
+   the original file, all downloadable from the import page and the data's history.
 
 ## Products
 
@@ -79,15 +83,16 @@ Choose the data, filters (products: category, brand, supplier, status, stock sta
 created/updated dates; orders: status, payment status, dates; …), columns and format. Headers are column
 keys, so an export of an importable entity can be imported as it is (tested: export → import in update
 mode changes nothing). Rows are streamed with `lazyById(500)`; up to `PHARMACY_EXPORT_SYNC_MAX_ROWS`
-(5 000) the file is built at once, larger exports on the queue (**Export history** lists them). Values
+(5 000) the file is built at once and the page shows a download link; larger exports run on the queue and
+appear in the data's history. Values
 starting with `= + - @` are prefixed with `'` (formula injection) and the prefix is removed on import.
 
 ## Security and audit
 
 * Each entity has its own permission (`products.import`, `customers.export`, …); no admin gets them by
   default except the super admin and the role defaults listed in roles-and-permissions.md. Downloads of
-  templates, reports, originals and exports re-check the permission; history lists only entities the
-  admin may move.
+  templates, reports, originals and exports re-check the permission; a data's history opens only for
+  admins who may import or export it.
 * Sensitive entities export only approved columns (never passwords, codes, tokens, provider secrets or
   health data) and the audit entry is flagged `sensitive`.
 * Audited: `data.import_upload`, `data.import_confirm`, `data.import` (counts and status),

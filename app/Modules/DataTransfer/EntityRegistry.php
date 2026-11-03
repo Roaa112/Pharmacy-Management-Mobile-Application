@@ -31,6 +31,36 @@ final class EntityRegistry
         Entities\LoyaltyTransactionEntity::class,
     ];
 
+    /** The dashboard page each entity is imported and exported from (route name). */
+    public const PAGES = [
+        'products' => 'dashboard.products.index',
+        'categories' => 'dashboard.categories.index',
+        'brands' => 'dashboard.brands.index',
+        'inventory' => 'dashboard.inventory.index',
+        'suppliers' => 'dashboard.suppliers.index',
+        'cities' => 'dashboard.cities.index',
+        'areas' => 'dashboard.cities.index',
+        'loyalty_rewards' => 'dashboard.loyalty.rewards.index',
+        'customers' => 'dashboard.customers.index',
+        'orders' => 'dashboard.orders.index',
+        'order_items' => 'dashboard.orders.index',
+        'payments' => 'dashboard.payments.index',
+        'refunds' => 'dashboard.refunds.index',
+        'loyalty_transactions' => 'dashboard.loyalty.transactions',
+    ];
+
+    public static function pageUrl(string $key): string
+    {
+        return route(self::PAGES[$key] ?? 'dashboard.home');
+    }
+
+    /** May $admin import or export this entity at all (history and run pages). */
+    public static function visibleTo(Admin $admin, DataEntity $entity): bool
+    {
+        return ($entity->canImport() && $admin->hasPermission($entity->importPermission()))
+            || ($entity->canExport() && $admin->hasPermission($entity->exportPermission()));
+    }
+
     /** @return array<string, DataEntity> */
     public static function all(): array
     {

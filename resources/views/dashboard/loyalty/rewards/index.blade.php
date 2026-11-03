@@ -5,12 +5,7 @@
 @section('subtitle', 'What customers can get for their points.')
 
 @section('actions')
-    @can('loyalty_rewards.export')
-        <form method="POST" action="{{ route('dashboard.data.exports.store') }}" class="d-inline">@csrf
-            <input type="hidden" name="entity" value="loyalty_rewards"><input type="hidden" name="format" value="xlsx">
-            <button class="btn btn-outline-secondary"><i class="ti ti-download me-1"></i>Export</button>
-        </form>
-    @endcan
+    <x-admin.data-transfer :entities="['loyalty_rewards']" />
     @can('loyalty.manage_rewards')<a href="{{ route('dashboard.loyalty.rewards.create') }}" class="btn btn-primary"><i class="ti ti-plus me-1"></i>New reward</a>@endcan
 @endsection
 

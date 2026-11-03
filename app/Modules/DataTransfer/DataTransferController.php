@@ -13,9 +13,10 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 /**
- * Import & export centre. The route needs some import or export permission; every action checks
- * the permission of its own entity (EntityRegistry::authorize), and history lists only entities
- * the admin may move.
+ * Imports and exports, started from each data's own page (the x-admin.data-transfer control).
+ * The route needs some import or export permission; every action checks the permission of its
+ * own entity (EntityRegistry::authorize), and the history of an entity is shown only to admins
+ * who may move it.
  */
 class DataTransferController extends Controller
 {
@@ -23,21 +24,24 @@ class DataTransferController extends Controller
     {
     }
 
-    public function index(Request $request)
+    /** One entity's imports and exports. */
+    public function history(Request $request, string $entity)
     {
+        $definition = EntityRegistry::get($entity);
         $admin = auth('admin')->user();
-        $importable = EntityRegistry::importable($admin);
-        $exportable = EntityRegistry::exportable($admin);
-        $visible = array_unique([...array_keys($importable), ...array_keys($exportable)]);
+        abort_unless(EntityRegistry::visibleTo($admin, $definition), 403);
 
-        return view('dashboard.data.index', [
-            'importable' => $importable,
-            'exportable' => $exportable,
-            'entities' => EntityRegistry::all(),
-            'selectedExport' => $exportable[$request->query('export')] ?? reset($exportable) ?: null,
-            'recentImports' => ImportRun::with('admin:id,name')->whereIn('entity', array_keys($importable))->latest('id')->limit(5)->get(),
-            'recentExports' => ExportRun::with('admin:id,name')->whereIn('entity', $visible)->latest('id')->limit(5)->get(),
-            'modes' => ImportRun::MODES,
+        $canImport = $definition->canImport() && $admin->hasPermission($definition->importPermission());
+        $canExport = $definition->canExport() && $admin->hasPermission($definition->exportPermission());
+
+        return view('dashboard.data.history', [
+            'entity' => $definition,
+            'pageUrl' => EntityRegistry::pageUrl($entity),
+            'imports' => $canImport ? ImportRun::with('admin:id,name')->where('entity', $entity)
+                ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
+                ->latest('id')->paginate(15, ['*'], 'imports_page')->withQueryString() : null,
+            'exports' => $canExport ? ExportRun::with('admin:id,name')->where('entity', $entity)
+                ->latest('id')->paginate(15, ['*'], 'exports_page')->withQueryString() : null,
         ]);
     }
 
@@ -66,21 +70,10 @@ class DataTransferController extends Controller
         try {
             $run = $this->imports->start(auth('admin')->user(), $entity, $request->file('file'), $data['mode']);
         } catch (DomainException $e) {
-            return redirect()->back()->withInput()->with('error', $e->getMessage());
+            return redirect()->back()->with('error', $e->getMessage());
         }
 
         return redirect()->route('dashboard.data.imports.show', $run);
-    }
-
-    public function imports(Request $request)
-    {
-        $admin = auth('admin')->user();
-        $runs = ImportRun::with('admin:id,name')->whereIn('entity', array_keys(EntityRegistry::importable($admin)))
-            ->when($request->query('entity'), fn ($q, $e) => $q->where('entity', $e))
-            ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
-            ->latest('id')->paginate(25)->withQueryString();
-
-        return view('dashboard.data.imports', ['runs' => $runs, 'entities' => EntityRegistry::importable($admin)]);
     }
 
     public function showImport(ImportRun $importRun)
@@ -88,7 +81,12 @@ class DataTransferController extends Controller
         $entity = EntityRegistry::get($importRun->entity);
         EntityRegistry::authorize(auth('admin')->user(), $entity, 'import');
 
-        return view('dashboard.data.import', ['run' => $importRun->load('admin:id,name'), 'entity' => $entity, 'modes' => ImportRun::MODES]);
+        return view('dashboard.data.import', [
+            'run' => $importRun->load('admin:id,name'),
+            'entity' => $entity,
+            'modes' => ImportRun::MODES,
+            'pageUrl' => EntityRegistry::pageUrl($importRun->entity),
+        ]);
     }
 
     public function confirm(ImportRun $importRun)
@@ -135,13 +133,14 @@ class DataTransferController extends Controller
         return Storage::disk('local')->download($path, $name);
     }
 
+    /** Back to the page the export was started from, with a download link when it is ready. */
     public function export(Request $request)
     {
         $data = $request->validate([
             'entity' => ['required', 'string', Rule::in(array_keys(EntityRegistry::all()))],
             'format' => ['required', Rule::in(Spreadsheet::FORMATS)],
-            'filters' => ['nullable', 'array'],
             // Values are checked by the entity (ExportManager keeps only its own filters, as scalars).
+            'filters' => ['nullable', 'array'],
             'filters.*' => ['nullable'],
             'columns' => ['nullable', 'array'],
             'columns.*' => ['string', 'max:60'],
@@ -156,20 +155,11 @@ class DataTransferController extends Controller
             return redirect()->back()->with('error', $e->getMessage());
         }
 
-        return $run->status === ExportRun::COMPLETED
-            ? redirect()->route('dashboard.data.exports.index')->with('success', "Export ready: {$run->row_count} rows.")->with('download', $run->id)
-            : redirect()->route('dashboard.data.exports.index')->with($run->status === ExportRun::FAILED ? 'error' : 'success',
-                $run->status === ExportRun::FAILED ? 'The export failed: '.$run->failure_message : 'Export started in the background; it will appear here when ready.');
-    }
-
-    public function exports(Request $request)
-    {
-        $admin = auth('admin')->user();
-        $runs = ExportRun::with('admin:id,name')->whereIn('entity', array_keys(EntityRegistry::exportable($admin)))
-            ->when($request->query('entity'), fn ($q, $e) => $q->where('entity', $e))
-            ->latest('id')->paginate(25)->withQueryString();
-
-        return view('dashboard.data.exports', ['runs' => $runs, 'entities' => EntityRegistry::exportable($admin)]);
+        return match ($run->status) {
+            ExportRun::COMPLETED => redirect()->back()->with('success', "{$entity->label()} export ready: ".number_format($run->row_count).' rows.')->with('download', $run->id),
+            ExportRun::FAILED => redirect()->back()->with('error', 'The export failed: '.$run->failure_message),
+            default => redirect()->back()->with('success', "{$entity->label()} export started in the background. It will be in the import & export history when it is ready."),
+        };
     }
 
     public function download(ExportRun $exportRun)

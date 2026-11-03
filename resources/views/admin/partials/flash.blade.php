@@ -1,6 +1,8 @@
 @if (session('success'))
     <div class="alert alert-success alert-dismissible" role="alert">
-        <div class="d-flex gap-2"><i class="ti ti-circle-check fs-2"></i><div>{{ session('success') }}</div></div>
+        <div class="d-flex gap-2 align-items-center"><i class="ti ti-circle-check fs-2"></i><div>{{ session('success') }}</div>
+            @if (session('download'))<a href="{{ route('dashboard.data.exports.download', session('download')) }}" class="btn btn-sm btn-success ms-auto me-4"><i class="ti ti-download me-1"></i>Download file</a>@endif
+        </div>
         <a class="btn-close" data-bs-dismiss="alert" aria-label="Close"></a>
     </div>
 @endif

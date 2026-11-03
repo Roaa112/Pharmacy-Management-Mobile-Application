@@ -59,7 +59,6 @@
         'Operations' => [
             ['Contact messages', 'dashboard.contacts.index', 'mail', ['dashboard.contacts.*'], 0, 'contact_messages.view'],
             ['Settings', 'dashboard.settings.index', 'settings', ['dashboard.settings.*'], 0, 'settings'],
-            ['Import & export', 'dashboard.data.index', 'file-import', ['dashboard.data.*'], 0, 'data_transfer'],
             ['Admins & roles', 'dashboard.admins.index', 'shield-lock', ['dashboard.admins.*', 'dashboard.audit.*'], 0, 'admins'],
             ['Roles & permissions', 'dashboard.roles.index', 'key', ['dashboard.roles.*'], 0, 'roles.view'],
         ],

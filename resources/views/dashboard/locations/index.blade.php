@@ -5,6 +5,7 @@
 @section('subtitle', 'Governorates (cities) and their areas. Delivery zones are built from these; customer addresses are linked to them.')
 
 @section('actions')
+    <x-admin.data-transfer :entities="['cities', 'areas']" />
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createCity"><i class="ti ti-plus me-1"></i>New city</button>
 @endsection
 

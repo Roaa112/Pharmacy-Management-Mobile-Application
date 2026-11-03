@@ -6,6 +6,7 @@
 @section('pretitle', 'Sales')
 
 @section('actions')
+    <x-admin.data-transfer :entities="['orders', 'order_items']" />
     <span class="badge bg-teal-lt fs-5 py-2 px-3">Completed revenue: <x-admin.money :amount="$totalEarned" class="fw-bold" /></span>
 @endsection
 

@@ -347,18 +347,17 @@ Route::prefix('dashboard')->name('dashboard.')->group(function () use ($resource
         Route::get('roles/{role}', [RoleController::class, 'show'])->name('roles.show');
     });
 
-    // Import & export centre: each entity checks its own <entity>.import / .export permission.
+    // Import & export, started from each data's own page (x-admin.data-transfer): every action
+    // checks that entity's <entity>.import / .export permission.
     Route::middleware('can:data_transfer')->prefix('data')->name('data.')->group(function () {
-        Route::get('/', [DataTransferController::class, 'index'])->name('index');
         Route::get('templates/{entity}', [DataTransferController::class, 'template'])->name('template');
+        Route::get('{entity}/history', [DataTransferController::class, 'history'])->where('entity', '[a-z_]+')->name('history');
         Route::post('imports', [DataTransferController::class, 'upload'])->middleware('throttle:20,1')->name('imports.store');
-        Route::get('imports', [DataTransferController::class, 'imports'])->name('imports.index');
         Route::get('imports/{importRun}', [DataTransferController::class, 'showImport'])->name('imports.show');
         Route::post('imports/{importRun}/confirm', [DataTransferController::class, 'confirm'])->name('imports.confirm');
         Route::post('imports/{importRun}/cancel', [DataTransferController::class, 'cancelImport'])->name('imports.cancel');
         Route::get('imports/{importRun}/files/{kind}', [DataTransferController::class, 'importFile'])->whereIn('kind', ['original', 'errors', 'results'])->name('imports.file');
         Route::post('exports', [DataTransferController::class, 'export'])->middleware('throttle:20,1')->name('exports.store');
-        Route::get('exports', [DataTransferController::class, 'exports'])->name('exports.index');
         Route::get('exports/{exportRun}/download', [DataTransferController::class, 'download'])->name('exports.download');
     });
 });

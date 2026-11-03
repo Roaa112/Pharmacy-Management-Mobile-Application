@@ -1,17 +1,19 @@
 @extends('admin.layout')
 
-@section('title', 'Import #'.$run->id.' · '.$entity->label())
-@section('pretitle', 'Import & export')
+@section('title', $entity->label().' import #'.$run->id)
+@section('pretitle')
+    <a href="{{ $pageUrl }}" class="text-reset">{{ $entity->label() }}</a> · <a href="{{ route('dashboard.data.history', $run->entity) }}" class="text-reset">History</a>
+@endsection
 @section('subtitle', $run->original_name.' · '.($modes[$run->mode] ?? $run->mode).' · uploaded by '.($run->admin?->name ?? '—').' '.$run->created_at->diffForHumans())
 
 @section('actions')
+    <a href="{{ $pageUrl }}" class="btn btn-outline-secondary"><i class="ti ti-arrow-left me-1"></i>Back to {{ strtolower($entity->label()) }}</a>
     @if ($run->errors_path)<a href="{{ route('dashboard.data.imports.file', [$run, 'errors']) }}" class="btn btn-outline-secondary"><i class="ti ti-alert-triangle me-1"></i>Error report</a>@endif
     @if ($run->results_path)<a href="{{ route('dashboard.data.imports.file', [$run, 'results']) }}" class="btn btn-outline-secondary"><i class="ti ti-list-check me-1"></i>Result report</a>@endif
     <a href="{{ route('dashboard.data.imports.file', [$run, 'original']) }}" class="btn btn-outline-secondary"><i class="ti ti-file me-1"></i>Original file</a>
 @endsection
 
 @section('content')
-@include('dashboard.data._nav')
 @php $s = $run->summary ?? []; $processed = $s['processed'] ?? null; @endphp
 
 <div class="card mb-3">

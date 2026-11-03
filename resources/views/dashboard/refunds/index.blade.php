@@ -4,6 +4,10 @@
 @section('pretitle', 'Sales')
 @section('subtitle', 'Refunds come from accepted returns, canceled paid orders, or a manual request on a payment. Online payments are refunded through the provider; cash refunds are recorded with a reference.')
 
+@section('actions')
+    <x-admin.data-transfer :entities="['refunds']" />
+@endsection
+
 @section('content')
 <div class="row row-cards mb-3">
     <div class="col-md-4"><x-admin.stat label="Open refunds" icon="receipt-refund" tone="orange" :value="(int) $open->count" :hint="number_format((float) $open->amount, 2).' to pay back'" :href="route('dashboard.refunds.index', ['status' => 'pending'])" /></div>

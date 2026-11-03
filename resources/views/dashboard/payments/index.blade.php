@@ -5,6 +5,7 @@
 @section('subtitle', 'Every payment attempt. Online payments become paid only on verified provider evidence; there is no manual "mark as paid".')
 
 @section('actions')
+    <x-admin.data-transfer :entities="['payments']" />
     <a href="{{ route('dashboard.cod.index') }}" class="btn btn-outline-primary"><i class="ti ti-cash me-1"></i>COD reconciliation</a>
     @can('refunds')<a href="{{ route('dashboard.refunds.index') }}" class="btn btn-outline-primary"><i class="ti ti-receipt-refund me-1"></i>Refunds{{ $pendingRefunds ? ' ('.$pendingRefunds.')' : '' }}</a>@endcan
     <a href="{{ route('dashboard.payments.events') }}" class="btn btn-outline-primary"><i class="ti ti-webhook me-1"></i>Provider events</a>

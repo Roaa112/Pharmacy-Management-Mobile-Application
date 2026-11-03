@@ -5,6 +5,7 @@
 @section('subtitle', 'Top-level categories and their subcategories, as shown in the app.')
 
 @section('actions')
+    <x-admin.data-transfer :entities="['categories']" />
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createCategory"><i class="ti ti-plus me-1"></i>New category</button>
 @endsection
 

@@ -5,13 +5,7 @@
 @section('subtitle', 'Every points movement, never edited or deleted.')
 
 @section('actions')
-    @can('loyalty_transactions.export')
-        <form method="POST" action="{{ route('dashboard.data.exports.store') }}" class="d-inline">@csrf
-            <input type="hidden" name="entity" value="loyalty_transactions"><input type="hidden" name="format" value="xlsx">
-            @foreach (['type', 'from', 'to'] as $f)@if (request($f))<input type="hidden" name="filters[{{ $f }}]" value="{{ request($f) }}">@endif @endforeach
-            <button class="btn btn-outline-secondary"><i class="ti ti-download me-1"></i>Export</button>
-        </form>
-    @endcan
+    <x-admin.data-transfer :entities="['loyalty_transactions']" />
 @endsection
 
 @section('content')

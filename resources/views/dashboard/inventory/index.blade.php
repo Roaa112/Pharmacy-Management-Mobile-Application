@@ -10,6 +10,7 @@
 @section('subtitle', 'Stock per SKU and warehouse. Available = on hand − reserved for orders. Every change is a movement in the stock ledger.')
 
 @section('actions')
+    <x-admin.data-transfer :entities="['inventory']" />
     <a href="{{ route('dashboard.inventory.movements') }}" class="btn btn-outline-primary"><i class="ti ti-arrows-exchange me-1"></i>Movements</a>
     <a href="{{ route('dashboard.inventory.reports') }}" class="btn btn-outline-primary"><i class="ti ti-report-analytics me-1"></i>Reports</a>
 @endsection

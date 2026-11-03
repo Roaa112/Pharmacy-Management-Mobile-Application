@@ -328,10 +328,11 @@ class ImportExportTest extends TestCase
         $this->actingAs($warehouse, 'admin')->post(route('dashboard.data.exports.store'), ['entity' => 'payments', 'format' => 'csv'])->assertForbidden();
         $this->actingAs($warehouse, 'admin')->post(route('dashboard.data.exports.store'), ['entity' => 'inventory', 'format' => 'csv'])->assertRedirect();
         $this->actingAs($warehouse, 'admin')->post(route('dashboard.data.imports.store'), ['entity' => 'products', 'mode' => 'upsert', 'file' => $this->csv([$this->row()])])->assertForbidden();
-        $this->actingAs($warehouse, 'admin')->get(route('dashboard.data.index'))->assertOk()->assertDontSee('Customers</option>', false);
-
-        // History only shows what the admin may move.
-        $this->actingAs($warehouse, 'admin')->get(route('dashboard.data.exports.index'))->assertOk()->assertDontSee('>Customers<', false);
+        // The inventory page offers its import / export; history only for data the admin may move.
+        $this->actingAs($warehouse, 'admin')->get(route('dashboard.inventory.index'))->assertOk()
+            ->assertSee('Import Inventory')->assertSee('Export Inventory');
+        $this->actingAs($warehouse, 'admin')->get(route('dashboard.data.history', 'inventory'))->assertOk();
+        $this->actingAs($warehouse, 'admin')->get(route('dashboard.data.history', 'customers'))->assertForbidden();
         $customersExport = ExportRun::where('entity', 'customers')->first();
         $this->actingAs($warehouse, 'admin')->get(route('dashboard.data.exports.download', $customersExport))->assertForbidden();
     }
@@ -403,11 +404,49 @@ class ImportExportTest extends TestCase
         $this->assertSame('failed', $empty->status);
         $this->assertStringContainsString('Missing columns', $empty->failure_message);
 
-        foreach ([route('dashboard.data.index'), route('dashboard.data.imports.index'), route('dashboard.data.exports.index'), route('dashboard.data.imports.show', $empty)] as $url) {
-            $this->actingAs($this->admin, 'admin')->get($url)->assertOk();
-        }
+        $this->actingAs($this->admin, 'admin')->get(route('dashboard.data.history', 'products'))->assertOk()->assertSee('#'.$run->id)->assertSee('#'.$empty->id);
+        $this->actingAs($this->admin, 'admin')->get(route('dashboard.data.imports.show', $empty))->assertOk()->assertSee('Back to products');
+        $this->actingAs($this->admin, 'admin')->get(route('dashboard.data.history', 'nonsense'))->assertNotFound();
         $this->actingAs($this->admin, 'admin')->get(route('dashboard.data.imports.file', [$run, 'original']))->assertOk();
         $this->assertSame(['data.import_upload', 'data.import_cancel', 'data.import_download'], AdminAuditLog::where('subject_id', $run->id)->where('subject_type', 'ImportRun')->orderBy('id')->pluck('action')->all());
+    }
+
+    public function test_each_page_offers_import_and_export_of_its_own_data_only(): void
+    {
+        // route => [titles shown, entities offered]
+        $pages = [
+            'dashboard.products.index' => [['Import Products', 'Export Products'], ['products']],
+            'dashboard.categories.index' => [['Import Categories', 'Export Categories'], ['categories']],
+            'dashboard.brands.index' => [['Import Brands', 'Export Brands'], ['brands']],
+            'dashboard.inventory.index' => [['Import Inventory', 'Export Inventory'], ['inventory']],
+            'dashboard.suppliers.index' => [['Import Suppliers', 'Export Suppliers'], ['suppliers']],
+            'dashboard.cities.index' => [['Import Cities / Areas', 'Export Cities / Areas'], ['cities', 'areas']],
+            'dashboard.loyalty.rewards.index' => [['Import Loyalty rewards', 'Export Loyalty rewards'], ['loyalty_rewards']],
+            'dashboard.customers.index' => [['Export Customers'], ['customers']],
+            'dashboard.orders.index' => [['Export Orders / Order lines'], ['orders', 'order_items']],
+            'dashboard.payments.index' => [['Export Payments'], ['payments']],
+            'dashboard.refunds.index' => [['Export Refunds'], ['refunds']],
+            'dashboard.loyalty.transactions' => [['Export Point transactions'], ['loyalty_transactions']],
+        ];
+
+        foreach ($pages as $route => [$titles, $entities]) {
+            $html = $this->actingAs($this->admin, 'admin')->get(route($route))->assertOk()->getContent();
+            foreach ($titles as $title) {
+                $this->assertStringContainsString($title, $html, $route);
+            }
+            // Only this page's data: every import/export panel and template link is for its entities.
+            preg_match_all('/data-dt-panel="[^"]+" data-entity="([a-z_]+)"/', $html, $panels);
+            preg_match_all('#/dashboard/data/(?:templates/)?([a-z_]+)(?:/history|\?format)#', $html, $links);
+            $this->assertEqualsCanonicalizing($entities, array_values(array_unique([...$panels[1], ...$links[1]])), $route);
+        }
+        $this->actingAs($this->admin, 'admin')->get(route('dashboard.customers.index'))->assertDontSee('Import Customers');
+
+        // An export goes back to its page with the file to download.
+        $this->makeSize();
+        $this->actingAs($this->admin, 'admin')->from(route('dashboard.products.index'))
+            ->post(route('dashboard.data.exports.store'), ['entity' => 'products', 'format' => 'csv'])
+            ->assertRedirect(route('dashboard.products.index'))->assertSessionHas('download');
+        $this->actingAs($this->admin, 'admin')->get(route('dashboard.products.index'))->assertSee('Download file');
     }
 
     public function test_image_urls_to_private_addresses_are_refused(): void

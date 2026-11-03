@@ -5,6 +5,7 @@
 @section('subtitle', 'Brands shown on product pages and used for brand discounts.')
 
 @section('actions')
+    <x-admin.data-transfer :entities="['brands']" />
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createbrand"><i class="ti ti-plus me-1"></i>New brand</button>
 @endsection
 

@@ -4,6 +4,10 @@
 @section('pretitle', 'Sales')
 @section('subtitle', 'Registered app users and their purchase history.')
 
+@section('actions')
+    <x-admin.data-transfer :entities="['customers']" />
+@endsection
+
 @section('content')
 <div class="row row-cards mb-3">
     <div class="col-sm-4"><x-admin.stat label="Customers" icon="users" tone="azure" :value="number_format($total)" /></div>

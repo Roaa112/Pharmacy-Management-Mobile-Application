@@ -5,6 +5,7 @@
 @section('subtitle', 'Balance = invoices − payments − credit from goods returned.')
 
 @section('actions')
+    <x-admin.data-transfer :entities="['suppliers']" />
     <a href="{{ route('dashboard.purchase_orders.index') }}" class="btn btn-outline-primary"><i class="ti ti-file-invoice me-1"></i>Purchase orders</a>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#supplierNew"><i class="ti ti-plus me-1"></i>New supplier</button>
 @endsection
