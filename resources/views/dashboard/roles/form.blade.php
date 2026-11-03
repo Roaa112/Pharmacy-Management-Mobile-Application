@@ -14,7 +14,9 @@
 <style>
     @media (min-width: 992px) { .role-summary { position: sticky; top: 1rem; } }
     .permission-module .accordion-button { gap: .75rem; }
-    .permission-item { border-radius: .375rem; padding: .5rem .75rem; }
+    /* Keep the switch inside the row: form-switch reserves the left padding the toggle sits in. */
+    .permission-item.form-switch { border-radius: .375rem; padding: .5rem .75rem .5rem 3.5rem; min-height: 100%; }
+    .permission-item.form-switch .form-check-input { margin-left: -2.75rem; margin-top: .2rem; }
     .permission-item:hover { background: var(--tblr-bg-surface-secondary); }
     .permission-item.is-locked { opacity: .6; }
     .module-summary li { display: flex; justify-content: space-between; padding: .15rem 0; }
