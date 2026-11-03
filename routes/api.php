@@ -230,7 +230,13 @@ Route::middleware('auth:sanctum')->prefix('user/health')->group(function () {
 });
 
 
-Route::middleware('auth:sanctum')->post('user/contact-messages', [ApiContactMassageController::class, 'store']);
+Route::middleware('auth:sanctum')->prefix('user/contact-messages')->group(function () {
+    Route::post('/', [ApiContactMassageController::class, 'store']);
+    // The customer's conversations with the pharmacy (pharmacy replies arrive as push notifications too).
+    Route::get('/', [ApiContactMassageController::class, 'index']);
+    Route::get('/{id}', [ApiContactMassageController::class, 'show'])->whereNumber('id');
+    Route::post('/{id}/replies', [ApiContactMassageController::class, 'reply'])->whereNumber('id')->middleware('throttle:10,1');
+});
 Route::middleware('auth:sanctum')->prefix('user/cart')->group(function () {
 
     Route::get('/', [CartController::class, 'showCart']); // get cart items

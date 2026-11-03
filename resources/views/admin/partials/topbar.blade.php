@@ -42,6 +42,12 @@
                                 <span><i class="ti ti-package-off me-2 text-secondary"></i>Out-of-stock sizes</span>
                                 <span class="badge {{ ($adminAttention['out_of_stock'] ?? 0) ? 'bg-red-lt' : 'bg-secondary-lt' }}">{{ $adminAttention['out_of_stock'] ?? 0 }}</span>
                             </a>
+                            @can('contact_messages.view')
+                                <a href="{{ route('dashboard.contacts.index', ['status' => 'open']) }}" class="list-group-item list-group-item-action d-flex justify-content-between">
+                                    <span><i class="ti ti-mail me-2 text-secondary"></i>Unanswered messages</span>
+                                    <span class="badge {{ ($adminAttention['open_contact_messages'] ?? 0) ? 'bg-orange-lt' : 'bg-secondary-lt' }}">{{ $adminAttention['open_contact_messages'] ?? 0 }}</span>
+                                </a>
+                            @endcan
                         </div>
                     </div>
                 </div>

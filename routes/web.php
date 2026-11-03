@@ -100,6 +100,8 @@ Route::prefix('dashboard')->name('dashboard.')->group(function () use ($resource
     Route::get('customers/{customer}', [CustomerController::class, 'show'])->middleware('can:customers.view')->name('customers.show');
     Route::patch('customers/{customer}/active', [CustomerController::class, 'toggleActive'])->middleware('can:customers.activate')->name('customers.toggleActive');
     Route::get('/contacts', [ContactMassageController::class, 'index'])->middleware('can:contact_messages.view')->name('contacts.index');
+    Route::post('/contact-messages/{message}/replies', [ContactMassageController::class, 'reply'])->middleware(['can:contact_messages.reply', 'throttle:30,1'])->name('contact-messages.reply');
+    Route::post('/contact-messages/{message}/replies/{reply}/resend', [ContactMassageController::class, 'resend'])->middleware(['can:contact_messages.reply', 'throttle:30,1'])->name('contact-messages.resend');
     Route::delete('/contact-messages/{id}', [ContactMassageController::class, 'destroy'])->middleware('can:contact_messages.delete')->name('contact-messages.destroy');
 
     // Stock: read and change. Every change is a ledger movement with a reason and is audited.

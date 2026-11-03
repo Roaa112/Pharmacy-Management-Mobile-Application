@@ -6,7 +6,6 @@
 
 @section('actions')
     <a href="{{ route('dashboard.reports.index') }}" class="btn btn-outline-primary"><i class="ti ti-chart-bar me-1"></i>Reports</a>
-    <a href="{{ route('dashboard.products.create') }}" class="btn btn-primary"><i class="ti ti-plus me-1"></i>New product</a>
 @endsection
 
 @section('content')

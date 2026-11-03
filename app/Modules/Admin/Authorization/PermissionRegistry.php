@@ -54,7 +54,8 @@ final class PermissionRegistry
             'customers.activate' => ['users', 'Activate / deactivate customers', 'Sign a customer out and block or restore access.'],
             'customers.export' => ['users', 'Export customers', 'Download customer contact data (personal data).'],
             'contact_messages.view' => ['users', 'View contact messages', 'Messages sent from the app.'],
-            'contact_messages.delete' => ['users', 'Delete contact messages', 'Remove a contact message.'],
+            'contact_messages.reply' => ['users', 'Reply to contact messages', 'Answer a customer (sent to the app as a notification).'],
+            'contact_messages.delete' =>['users', 'Delete contact messages', 'Remove a contact message.'],
 
             // Returns & refunds
             'refunds.view' => ['refunds', 'View returns & refunds', 'Return requests, refunds and their history.'],

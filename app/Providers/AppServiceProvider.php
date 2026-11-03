@@ -61,6 +61,7 @@ class AppServiceProvider extends ServiceProvider
                 'shipments_attention' => Shipment::where('needs_attention', true)->count(),
                 'pending_refunds' => \App\Models\Refund::whereIn('status', ['pending', 'failed'])->count(),
                 'pending_redemptions' => \App\Models\LoyaltyRedemption::whereIn('status', \App\Models\LoyaltyRedemption::OPEN)->count(),
+                'open_contact_messages' => \App\Models\ContactMessage::where('status', \App\Models\ContactMessage::STATUS_OPEN)->count(),
             ]));
         });
     }

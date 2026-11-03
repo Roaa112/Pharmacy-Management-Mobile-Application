@@ -3816,6 +3816,97 @@
                         }
                     },
                     "response": []
+                },
+                {
+                    "name": "My conversations",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/user/contact-messages?page=1&per_page=20",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "user",
+                                "contact-messages"
+                            ],
+                            "query": [
+                                {
+                                    "key": "page",
+                                    "value": "1",
+                                    "description": "",
+                                    "disabled": true
+                                },
+                                {
+                                    "key": "per_page",
+                                    "value": "20",
+                                    "description": "1-100",
+                                    "disabled": true
+                                }
+                            ]
+                        },
+                        "description": "The customer's contact messages, newest activity first. Each has status (open = waiting for the pharmacy, replied = the pharmacy answered last) and replies [{id, from: pharmacy|customer, body, created_at}]. Pharmacy replies also arrive as a push notification and in GET /api/user/notifications with kind = contact_reply and contact_message_id (open the conversation from it)."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Conversation details",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/api/user/contact-messages/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "user",
+                                "contact-messages",
+                                "1"
+                            ]
+                        },
+                        "description": "One conversation of the customer with all its replies. 404 if it is not theirs."
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Answer the pharmacy",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{base_url}}/api/user/contact-messages/1/replies",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "user",
+                                "contact-messages",
+                                "1",
+                                "replies"
+                            ]
+                        },
+                        "description": "The customer replies inside an existing conversation (body: max 5000). The conversation goes back to \"open\" (waiting for the pharmacy). Returns the updated conversation. Limited to 10 per minute.",
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"body\": \"Thank you!\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    },
+                    "response": []
                 }
             ]
         },

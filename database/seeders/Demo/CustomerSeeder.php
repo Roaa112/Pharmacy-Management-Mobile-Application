@@ -3,6 +3,7 @@
 namespace Database\Seeders\Demo;
 
 use App\Models\Address;
+use App\Models\Admin;
 use App\Models\Cart;
 use App\Models\ContactMessage;
 use App\Models\Favorite;
@@ -157,5 +158,19 @@ class CustomerSeeder extends Seeder
             $user = self::user($email);
             ContactMessage::create(['user_id' => $user->id, 'name' => $user->name, 'email' => $email, 'message' => $message]);
         }
+
+        // Conversations: a delivered pharmacy reply (recorded as sent, nothing is pushed while
+        // seeding), and one the customer answered so it waits for the pharmacy again.
+        $adminId = Admin::query()->value('id');
+        $omar = ContactMessage::where('email', 'omar@example.com')->first();
+        $omar->replies()->create(['admin_id' => $adminId, 'body' => 'Yes, we deliver to 6th of October City within one working day.',
+            'sent_at' => now(), 'push_devices' => 0]);
+        $omar->update(['status' => ContactMessage::STATUS_REPLIED, 'last_activity_at' => now()]);
+
+        $mona = ContactMessage::where('email', 'mona@example.com')->first();
+        $mona->replies()->create(['admin_id' => $adminId, 'body' => 'نعم، متوفر. هل تفضلين نوعًا معينًا؟',
+            'sent_at' => now(), 'push_devices' => 0]);
+        $mona->replies()->create(['from_customer' => true, 'body' => 'أي نوع خالٍ من اللاكتوز من فضلك.']);
+        $mona->update(['status' => ContactMessage::STATUS_OPEN, 'last_activity_at' => now()]);
     }
 }
