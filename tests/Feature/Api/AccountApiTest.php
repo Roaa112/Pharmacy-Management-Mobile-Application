@@ -58,23 +58,25 @@ class AccountApiTest extends TestCase
         $this->assertFalse(User::where('email', 'sara@example.com')->value('is_verified'));
     }
 
-    public function test_login_keeps_the_response_shape_the_app_parses(): void
+    public function test_login_returns_the_token_and_real_status_codes(): void
     {
-        // The app reads original.token: keep this shape until the app is updated (see audit notes).
         $user = User::factory()->create(['email' => 'sara@example.com']);
 
         $this->postJson('/api/user/login', ['email' => 'sara@example.com', 'password' => 'password'])
             ->assertOk()
-            ->assertJsonStructure(['original' => ['token', 'user' => ['id', 'email']]])
-            ->assertJsonMissingPath('original.user.password')
-            ->assertJsonMissingPath('original.user.otp_code');
+            ->assertJsonStructure(['token', 'user' => ['id', 'email']])
+            ->assertJsonMissingPath('original')
+            ->assertJsonMissingPath('user.password')
+            ->assertJsonMissingPath('user.otp_code');
 
         $this->postJson('/api/user/login', ['email' => 'sara@example.com', 'password' => 'wrong'])
-            ->assertJsonPath('original.message', 'Unauthorized')
-            ->assertJsonMissingPath('original.token');
+            ->assertUnauthorized()
+            ->assertJsonPath('message', 'Unauthorized')
+            ->assertJsonMissingPath('token');
 
         $this->postJson('/api/user/login', ['email' => 'nobody@example.com', 'password' => 'password'])
-            ->assertJsonMissingPath('original.token');
+            ->assertUnauthorized()
+            ->assertJsonMissingPath('token');
 
         $this->postJson('/api/user/login', [])->assertStatus(422);
         $this->assertSame(1, $user->tokens()->count());

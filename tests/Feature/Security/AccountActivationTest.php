@@ -55,18 +55,17 @@ class AccountActivationTest extends TestCase
     }
 
     /**
-     * Login keeps its existing contract: HTTP 200 with the answer under "original" (the app reads
-     * original.token), also for refusals. The new refusals follow it and add original.code.
+     * Login refusals answer 403 with a machine-readable code.
      */
     public function test_unverified_users_can_still_log_in_unless_the_flag_is_on(): void
     {
         $user = User::factory()->create(['is_verified' => false, 'password' => 'password123']);
 
-        $this->postJson('/api/user/login', ['email' => $user->email, 'password' => 'password123'])->assertOk()->assertJsonStructure(['original' => ['token']]);
+        $this->postJson('/api/user/login', ['email' => $user->email, 'password' => 'password123'])->assertOk()->assertJsonStructure(['token']);
 
         config(['pharmacy.require_verified_login' => true]);
         $this->postJson('/api/user/login', ['email' => $user->email, 'password' => 'password123'])
-            ->assertJsonPath('original.code', 'email_not_verified')->assertJsonMissingPath('original.token');
+            ->assertForbidden()->assertJsonPath('code', 'email_not_verified')->assertJsonMissingPath('token');
     }
 
     public function test_deactivated_customer_cannot_log_in_and_their_tokens_stop_working(): void
@@ -82,7 +81,7 @@ class AccountActivationTest extends TestCase
 
         $this->app['auth']->forgetGuards();
         $this->postJson('/api/user/login', ['email' => $user->email, 'password' => 'password123'])
-            ->assertJsonPath('original.code', 'account_inactive')->assertJsonMissingPath('original.token');
+            ->assertForbidden()->assertJsonPath('code', 'account_inactive')->assertJsonMissingPath('token');
 
         // A token that slipped through (created before deactivation and not revoked) is refused too.
         $user->forceFill(['is_active' => true])->save();

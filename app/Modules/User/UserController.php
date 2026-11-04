@@ -288,9 +288,9 @@ class UserController extends Controller
     }
 
     public function login(LoginRequest $request){
-        return response()->json(
-            $this->userService->login($request->validated())
-        );
+        // The service already builds the response with its status code (401/403 on failure);
+        // wrapping it again would send that response serialized inside a 200.
+        return $this->userService->login($request->validated());
     }
 
 

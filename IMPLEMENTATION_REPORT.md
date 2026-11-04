@@ -753,7 +753,7 @@ shows 295 old routes, of which 281 still answer. The 14 missing are deliberate r
 3. **Image URLs** (`full_url`, medication `image_url`) are now signed links valid for 60 minutes, not permanent public URLs. Apps that cache image URLs for longer than an hour must refetch.
 4. **Stricter health validation:** unknown BMI `unit`, future measurement dates, absurd pregnancy/ovulation/child dates. The old code silently accepted these and produced wrong results.
 5. **Message language.** Messages follow `Accept-Language` when the app sends exactly `ar` or `en`; without the header they stay Arabic, as before. Legacy comparison fields (`phase`, `evaluation`, `status_meaning`, BMI `status`, `trimester`, `month_info`, `summary`, `baby_*`) are always Arabic and byte-identical to before.
-6. **Deactivated accounts.** Their tokens get 403 `account_inactive`. Login keeps its existing contract: HTTP 200 with the answer under `original`, now with `original.code` for refusals.
+6. **Deactivated accounts.** Their tokens get 403 `account_inactive`. Login answers with real status codes: 200 `{token, user}` on success, 401 for wrong credentials, 403 with `code` (`account_inactive`, `email_not_verified`) for refusals. The old `original` wrapper (always HTTP 200) is gone: the app must read `token`, not `original.token`.
 7. **Payment methods.** Checkout accepts the active payment-method codes of the store's country; the same three codes as before are seeded.
 8. **Coupon preview.** It now applies the coupon's minimum order and caps. Without `address_id` it still covers the items only. Send `address_id` to get exactly what checkout will charge.
 
@@ -809,7 +809,7 @@ Updated existing tests (intentional changes, each commented in the test):
 | Cycle bounds 21–35 / period 3–10 | Clinical normal range. |
 | Legacy Arabic strings in comparison fields (including their typos) | Apps may compare against them; the `*_code` fields are the stable replacement. |
 | Flash sale 1-hour default | Behaviour of every sale saved before `ends_at` existed. |
-| `delivery_prices` table, `/api/v1/v1` prefix, login `original` wrapper, free-text blood sugar condition | Kept for compatibility; removing any of them needs a coordinated app release. |
+| `delivery_prices` table, `/api/v1/v1` prefix, free-text blood sugar condition | Kept for compatibility; removing any of them needs a coordinated app release. |
 | Legacy `Discount` model | Still used as a product `saleable` (the audit wrongly listed it as unused). |
 
 ### A.10. Remaining issues and required pre-deployment steps

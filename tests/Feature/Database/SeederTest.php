@@ -97,7 +97,7 @@ class SeederTest extends TestCase
 
         $token = $this->postJson('/api/user/login', ['email' => 'sara@example.com', 'password' => CustomerSeeder::PASSWORD])
             ->assertOk()
-            ->json('original.token');
+            ->json('token');
         $this->assertNotEmpty($token);
 
         $this->withToken($token)->getJson('/api/user/cart')->assertOk();
