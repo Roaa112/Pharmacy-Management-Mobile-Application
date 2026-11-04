@@ -19,6 +19,7 @@ use App\Models\Order;
 use App\Models\ProductSize;
 use App\Models\ReturnRequest;
 use App\Models\Setting;
+use App\Models\Shipment;
 use App\Models\StockMovement;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -294,5 +295,15 @@ class AdminPagesTest extends TestCase
 
         $this->actingAs($this->admin, 'admin')->get('/dashboard')
             ->assertViewHas('stats', fn ($s) => $s['out_of_stock'] === 1);
+    }
+
+    public function test_reports_page_shows_shipment_statuses(): void
+    {
+        // The status is enum-cast, so the badge receives a ShipmentStatus rather than a string.
+        Shipment::create(['order_id' => $this->order->id, 'status' => 'picked_up', 'cod_amount' => $this->order->total_price]);
+
+        $this->actingAs($this->admin, 'admin')->get('/dashboard/reports?from=2020-01-01&to=2030-01-01')
+            ->assertOk()
+            ->assertSee('Picked up');
     }
 }

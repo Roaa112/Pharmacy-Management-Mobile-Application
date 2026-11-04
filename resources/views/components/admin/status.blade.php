@@ -1,6 +1,11 @@
 @props(['status'])
 
 @php
+    // Enum-cast attributes (ShipmentStatus, PaymentStatus, ...) arrive as enums, not strings.
+    if ($status instanceof \BackedEnum) {
+        $status = $status->value;
+    }
+
     $map = [
         // orders
         'pending' => ['Pending', 'orange'],
@@ -40,6 +45,11 @@
         'in_transit' => ['In transit', 'cyan'],
         'dispatched' => ['Dispatched', 'cyan'],
         'overstock' => ['Overstock', 'purple'],
+        // shipments
+        'assigned' => ['Assigned', 'blue'],
+        'picked_up' => ['Picked up', 'cyan'],
+        'delivered' => ['Delivered', 'green'],
+        'returned' => ['Returned', 'orange'],
         // generic
         'active' => ['Active', 'green'],
         'inactive' => ['Inactive', 'secondary'],
