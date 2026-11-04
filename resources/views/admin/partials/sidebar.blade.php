@@ -94,12 +94,20 @@
         </a>
 
         <div class="collapse navbar-collapse" id="sidebar-menu">
-            <ul class="navbar-nav pt-lg-2 pb-3">
+            <div class="sidebar-search" role="search">
+                <label class="sidebar-search-field">
+                    <i class="ti ti-search" aria-hidden="true"></i>
+                    <input type="search" id="sidebar-search" placeholder="Search menu"
+                           aria-label="Search the menu" aria-controls="sidebar-nav" autocomplete="off" spellcheck="false">
+                </label>
+            </div>
+
+            <ul class="navbar-nav pb-3" id="sidebar-nav">
                 @foreach ($sections as $section => $items)
-                    <li class="nav-section">{{ $section }}</li>
+                    <li class="nav-section" data-section="{{ $section }}">{{ $section }}</li>
                     @foreach ($items as $item)
                         @php [$label, $route, $icon, $patterns] = $item; $badge = $item[4] ?? 0; @endphp
-                        <li class="nav-item">
+                        <li class="nav-item" data-section="{{ $section }}" data-search="{{ \Illuminate\Support\Str::lower($label.' '.$section) }}">
                             <a class="nav-link {{ request()->routeIs(...$patterns) ? 'active' : '' }}" href="{{ route($route) }}"
                                title="{{ $label }}" @if (request()->routeIs(...$patterns)) aria-current="page" @endif>
                                 <span class="nav-link-icon"><i class="ti ti-{{ $icon }} fs-2"></i></span>
@@ -113,7 +121,7 @@
 
                     @if ($section === 'Sales' && $canSeeHealth)
                         {{-- Health data is personal and sensitive: only for the health_data permission. --}}
-                        <li class="nav-item dropdown">
+                        <li class="nav-item dropdown" data-section="{{ $section }}">
                             <a class="nav-link dropdown-toggle {{ $healthActive ? 'active show' : '' }}" href="#sidebar-health"
                                data-bs-toggle="dropdown" data-bs-auto-close="false" role="button"
                                aria-expanded="{{ $healthActive ? 'true' : 'false' }}" title="Customer health data">
@@ -122,13 +130,86 @@
                             </a>
                             <div class="dropdown-menu {{ $healthActive ? 'show' : '' }}">
                                 @foreach ($healthLinks as [$label, $route])
-                                    <a class="dropdown-item {{ request()->routeIs($route) ? 'active' : '' }}" href="{{ route($route) }}">{{ $label }}</a>
+                                    <a class="dropdown-item {{ request()->routeIs($route) ? 'active' : '' }}" href="{{ route($route) }}"
+                                       data-search="{{ \Illuminate\Support\Str::lower('health data '.$label) }}">{{ $label }}</a>
                                 @endforeach
                             </div>
                         </li>
                     @endif
                 @endforeach
+                <li class="sidebar-search-empty d-none">No pages match your search.</li>
             </ul>
         </div>
     </div>
 </aside>
+
+<script>
+    // Menu search: filters the links by page or section name. Enter opens the first match,
+    // Escape clears, and "/" jumps to the field from anywhere outside a text field.
+    (function () {
+        const input = document.getElementById('sidebar-search');
+        const nav = document.getElementById('sidebar-nav');
+        const empty = nav.querySelector('.sidebar-search-empty');
+        const submenu = nav.querySelector('.dropdown-menu');
+        const submenuWasOpen = submenu ? submenu.classList.contains('show') : false;
+
+        const matches = (text, words) => words.every((word) => text.includes(word));
+
+        function filter() {
+            const words = input.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+            let anyVisible = false;
+
+            nav.querySelectorAll('li.nav-item').forEach(function (item) {
+                const subLinks = item.querySelectorAll('.dropdown-item[data-search]');
+                let visible;
+
+                if (subLinks.length) {
+                    visible = false;
+                    subLinks.forEach(function (link) {
+                        const hit = matches(link.dataset.search, words);
+                        link.classList.toggle('d-none', !hit);
+                        visible = visible || hit;
+                    });
+                    // Open the submenu while searching so its matching pages can be seen.
+                    submenu.classList.toggle('show', words.length ? visible : submenuWasOpen);
+                } else {
+                    visible = matches(item.dataset.search, words);
+                }
+
+                item.classList.toggle('d-none', !visible);
+                anyVisible = anyVisible || visible;
+            });
+
+            nav.querySelectorAll('li.nav-section').forEach(function (header) {
+                const selector = 'li.nav-item[data-section="' + CSS.escape(header.dataset.section) + '"]:not(.d-none)';
+                header.classList.toggle('d-none', !nav.querySelector(selector));
+            });
+
+            empty.classList.toggle('d-none', anyVisible);
+        }
+
+        input.addEventListener('input', filter);
+
+        input.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape') {
+                input.value = '';
+                filter();
+                input.blur();
+            } else if (event.key === 'Enter') {
+                const first = nav.querySelector('li.nav-item:not(.d-none) > a.nav-link:not(.dropdown-toggle), li.nav-item:not(.d-none) .dropdown-item:not(.d-none)');
+                if (first) {
+                    event.preventDefault();
+                    window.location.href = first.href;
+                }
+            }
+        });
+
+        document.addEventListener('keydown', function (event) {
+            if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+            const target = event.target;
+            if (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+            event.preventDefault();
+            input.focus();
+        });
+    })();
+</script>
