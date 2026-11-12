@@ -7,7 +7,9 @@ use App\Models\Order;
 use App\Models\ReturnRequest;
 use App\Models\User;
 use App\Modules\Orders\Services\ReturnDecisionService;
+use App\Support\PrivateFiles;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * One pending, one rejected and one accepted (partial) return. Decisions go through
@@ -59,9 +61,32 @@ class ReturnSeeder extends Seeder
         ]);
 
         if ($image) {
+            $this->putPlaceholderPhoto($image);
             $return->images()->create(['path' => $image]);
         }
 
         return $return;
+    }
+
+    /** A real file behind the demo photo, on the private disk the app serves from, or the image shows as broken. */
+    private function putPlaceholderPhoto(string $path): void
+    {
+        $disk = Storage::disk(PrivateFiles::PRIVATE_DISK);
+        if ($disk->exists($path)) {
+            return;
+        }
+
+        $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==');
+        if (function_exists('imagecreatetruecolor')) {
+            $img = imagecreatetruecolor(400, 400);
+            imagefill($img, 0, 0, imagecolorallocate($img, 226, 232, 240));
+            imagestring($img, 5, 130, 192, 'Return photo', imagecolorallocate($img, 71, 85, 105));
+            ob_start();
+            imagepng($img);
+            $png = ob_get_clean();
+            imagedestroy($img);
+        }
+
+        $disk->put($path, $png);
     }
 }

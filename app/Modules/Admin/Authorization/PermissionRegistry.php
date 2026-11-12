@@ -141,7 +141,8 @@ final class PermissionRegistry
             // Health
             'health_data.view' => ['health_data', 'View customer health records', 'Personal health measurements (every view is audited).'],
             'health_content.view' => ['health_content', 'View health content', 'Vaccination schedule and pregnancy weeks.'],
-            'health_content.manage' => ['health_content', 'Manage health content', 'Edit the vaccination schedule and pregnancy weeks.'],
+            'health_content.manage' => ['health_content', 'Manage health content', 'Edit the vaccination schedule, pregnancy weeks and health settings.'],
+            'health_rules.manage' => ['health_content', 'Manage health result rules', 'Thresholds and messages of BMI, blood sugar and blood pressure results (medical rules).'],
 
             // Settings
             'settings.view' => ['settings', 'View settings', 'Store settings.'],
@@ -170,6 +171,15 @@ final class PermissionRegistry
         'accountant' => ['orders.export', 'payments.export', 'refunds.export', 'loyalty_transactions.export', 'suppliers.export'],
     ];
 
+    /**
+     * Permissions that system roles get only when listed here, whatever modules they have
+     * (super admin has everything). Medical thresholds are for health specialists, not for every
+     * role that edits health content.
+     */
+    private const RESTRICTED_DEFAULTS = [
+        'health_rules.manage' => ['health_specialist'],
+    ];
+
     public static function slugs(): array
     {
         return array_keys(self::all());
@@ -196,7 +206,11 @@ final class PermissionRegistry
     {
         $modules = $role->permissions();
 
-        $slugs = array_keys(array_filter(self::all(), function (array $definition, string $slug) use ($modules) {
+        $slugs = array_keys(array_filter(self::all(), function (array $definition, string $slug) use ($modules, $role) {
+            if (isset(self::RESTRICTED_DEFAULTS[$slug])) {
+                return in_array($role->value, self::RESTRICTED_DEFAULTS[$slug], true);
+            }
+
             return in_array($definition[0], $modules, true) && !self::isDataTransfer($slug);
         }, ARRAY_FILTER_USE_BOTH));
 

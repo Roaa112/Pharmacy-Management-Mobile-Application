@@ -44,6 +44,8 @@ class Setting extends Model
         'loyalty_activation', 'loyalty_point_value', 'loyalty_min_redeem_points', 'loyalty_max_redeem_points_per_order',
         'loyalty_combine_with_discounts', 'loyalty_allow_partial_redemption', 'loyalty_allow_multiple_redemptions',
         'loyalty_expiry_warning_days', 'loyalty_redemption_validity_days',
+        // Health › Settings (App\Modules\HealthService\Services\HealthSettings).
+        'health_settings',
     ];
 
     protected $casts = [
@@ -51,6 +53,7 @@ class Setting extends Model
         'coupon_applies_to_delivery' => 'boolean',
         'vaccine_reminders_enabled' => 'boolean',
         'medication_reminders_enabled' => 'boolean',
+        'health_settings' => 'array',
         'coupon_release_on_cancel' => 'boolean',
         'loyalty_enabled' => 'boolean',
         'points_never_expire' => 'boolean',

@@ -71,16 +71,16 @@
                 <div class="card-header"><h3 class="card-title"><i class="ti ti-bell me-2 text-secondary"></i>Health reminders</h3></div>
                 <div class="card-body">
                     <p class="text-secondary small">Push notifications to customers' registered devices. Each reminder is sent at most once.</p>
-                    @foreach ([
-                        'vaccine_reminders_enabled' => ['Vaccination reminders (days before, per vaccine)', true],
-                        'medication_reminders_enabled' => ['Medication dose reminders', false],
-                    ] as $field => [$label, $default])
-                        <label class="form-check form-switch">
-                            <input type="hidden" name="{{ $field }}" value="0">
-                            <input class="form-check-input" type="checkbox" name="{{ $field }}" value="1" @checked(old($field, $s?->$field ?? $default))>
-                            <span class="form-check-label">{{ $label }}</span>
-                        </label>
-                    @endforeach
+                    <ul class="small mb-3">
+                        <li>Vaccination reminders: {{ ($s?->vaccine_reminders_enabled ?? true) ? 'on' : 'off' }}</li>
+                        <li>Medication dose reminders: {{ ($s?->medication_reminders_enabled ?? false) ? 'on' : 'off' }}</li>
+                    </ul>
+                    {{-- Reminders, send time, tools, texts and result messages are managed under Health content. --}}
+                    @can('health_content.view')
+                        <a href="{{ route('dashboard.health_content.settings.edit') }}" class="btn btn-sm btn-outline-primary"><i class="ti ti-adjustments me-1"></i>Health settings</a>
+                    @else
+                        <small class="text-secondary">Managed under Health content › Health settings.</small>
+                    @endcan
                 </div>
             </div>
         </div>

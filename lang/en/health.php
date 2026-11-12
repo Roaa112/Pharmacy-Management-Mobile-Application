@@ -3,6 +3,9 @@
 return [
     // "legacy" strings exist only in lang/ar/health.php: those fields are always served in Arabic.
 
+    // A reading no result rule covers (Health content › Result rules).
+    'result_unknown' => 'Unknown',
+
     'phase' => [
         'menstruation' => 'Period',
         'not_fertile' => 'Not fertile',
@@ -67,6 +70,7 @@ return [
         'child_deleted' => 'Child deleted',
         'device_registered' => 'Device registered for notifications',
         'device_removed' => 'Device unregistered',
+        'tool_disabled' => 'This service is not available at the moment.',
     ],
 
     'medication' => [

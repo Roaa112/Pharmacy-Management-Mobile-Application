@@ -34,6 +34,7 @@ use App\Modules\Delivery\Api\DeliveryWebhookController;
 use App\Modules\Payments\ApiPaymentMethodController;
 use App\Modules\HealthService\DeviceTokenController;
 use App\Modules\Admin\ApiPrivateFileController;
+use App\Http\Middleware\EnsureHealthToolEnabled;
 
 
 
@@ -97,6 +98,8 @@ Route::middleware([\App\Http\Middleware\SetLocaleLang::class])
            Route::get('locations/cities', [ApiLocationController::class, 'cities']);
            Route::get('locations/areas', [ApiLocationController::class, 'areas']);
            Route::get('payment-methods', [ApiPaymentMethodController::class, 'index']);
+           // Health tools: which are on, disclaimer and input limits (Health › Settings).
+           Route::get('health/config', [HealthServiceController::class, 'config']);
         });  // <-- هذه مغل بشكل صحيح
 });
 Route::prefix('user')->middleware('throttle:auth')->group(function () {
@@ -146,13 +149,13 @@ Route::middleware(['auth:sanctum', \App\Http\Middleware\SetLocaleLang::class])
 
     Route::post('/addresses/{id}/toggle-default', [ApiAddressController::class, 'toggleDefault']);
     Route::get('/medication', [MedicationController::class, 'index']);
-    Route::post('/medication', [MedicationController::class, 'store']);
+    Route::post('/medication', [MedicationController::class, 'store'])->middleware(EnsureHealthToolEnabled::class.':medication');
     // Kept for existing apps; constrained to numbers so it cannot swallow other PUT /user/... routes.
-    Route::put('{medication}', [MedicationController::class, 'update'])->whereNumber('medication');
+    Route::put('{medication}', [MedicationController::class, 'update'])->whereNumber('medication')->middleware(EnsureHealthToolEnabled::class.':medication');
     Route::delete('/medication/{medication}', [MedicationController::class, 'destroy']);
     Route::post('/medications/{medication}/log', [MedicationController::class, 'updateLogStatus']);
     Route::delete('/medications/remove-day', [MedicationController::class, 'deleteDayFromMedication']);
-    Route::post('/medications/{medication}/update', [MedicationController::class, 'update']);
+    Route::post('/medications/{medication}/update', [MedicationController::class, 'update'])->middleware(EnsureHealthToolEnabled::class.':medication');
 
 
 Route::post('/returns', [ReturnRequestController::class, 'store']);
@@ -189,19 +192,21 @@ Route::middleware('auth:sanctum')->prefix('user/health')->group(function () {
     Route::get('/weight', [HealthServiceController::class, 'getWeight']);
 
 
-    Route::post('/body-weight', [HealthServiceController::class, 'storeBodyWeight']);
+    // New entries are refused (403 health_tool_disabled) for tools switched off in Health › Settings;
+    // reading and deleting what was saved keeps working.
+    Route::post('/body-weight', [HealthServiceController::class, 'storeBodyWeight'])->middleware(EnsureHealthToolEnabled::class.':bmi');
 
-    Route::post('/ovulation', [HealthServiceController::class, 'storeOvulation']);
+    Route::post('/ovulation', [HealthServiceController::class, 'storeOvulation'])->middleware(EnsureHealthToolEnabled::class.':ovulation');
     Route::get('/ovulation/current', [HealthServiceController::class, 'getCycleForCurrentMonth']);
 
 
-    Route::post('/blood-sugar', [HealthServiceController::class, 'storeBloodSugar']);
+    Route::post('/blood-sugar', [HealthServiceController::class, 'storeBloodSugar'])->middleware(EnsureHealthToolEnabled::class.':blood_sugar');
 
-    Route::post('/blood-pressure', [HealthServiceController::class, 'storeBloodPressure']);
+    Route::post('/blood-pressure', [HealthServiceController::class, 'storeBloodPressure'])->middleware(EnsureHealthToolEnabled::class.':blood_pressure');
 
-    Route::post('/calculatePregnancy', [HealthServiceController::class, 'storePregnancy']);
+    Route::post('/calculatePregnancy', [HealthServiceController::class, 'storePregnancy'])->middleware(EnsureHealthToolEnabled::class.':pregnancy');
 
-    Route::post('/child', [HealthServiceController::class, 'storeVaccination']);
+    Route::post('/child', [HealthServiceController::class, 'storeVaccination'])->middleware(EnsureHealthToolEnabled::class.':vaccines');
 
     Route::delete('/child/{id}', [HealthServiceController::class, 'destroychild']);
     Route::get('/CurrentPregnancyStage', [HealthServiceController::class, 'getCurrentPregnancyStage']);

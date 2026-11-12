@@ -101,6 +101,12 @@ class HealthServiceController extends Controller
         ));
     }
 
+    /** GET /api/v1/user/health/config — which tools are on, the disclaimer and input limits (dashboard-managed). */
+    public function config()
+    {
+        return response()->json(['data' => \App\Modules\HealthService\Services\HealthSettings::current()->toPublicArray(api_locale())]);
+    }
+
     public function getBloodPressure(HealthHistoryRequest $request)
     {
         return $this->historyResponse($this->healthService->bloodPressureQuery($request->user()->id), $request);

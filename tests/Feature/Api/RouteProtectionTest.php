@@ -28,6 +28,8 @@ class RouteProtectionTest extends TestCase
         // Payment provider notifications: authenticated by the provider's HMAC signature, not a token.
         'PaymentWebhookController@handle',
         'ProductReviewController@index',
+        // Which health tools are on and their input limits (dashboard settings, no personal data).
+        'HealthServiceController@config',
         'Closure',
     ];
 

@@ -96,6 +96,28 @@ class PaymentsAndFilesTest extends TestCase
         $this->get($url)->assertForbidden();
     }
 
+    public function test_uploaded_return_photos_come_back_with_working_links(): void
+    {
+        $order = $this->makeOrder($this->user, $this->makeSize());
+        $order->forceFill(['status' => 'completed', 'completed_at' => now()])->save();
+
+        $created = $this->post('/api/user/returns', [
+            'order_id' => $order->id,
+            'reason' => 'Damaged',
+            'images' => [UploadedFile::fake()->image('a.jpg'), UploadedFile::fake()->image('b.png')],
+        ], ['Accept' => 'application/json'])->assertCreated()->assertJsonCount(2, 'data.images');
+
+        $id = $created->json('data.id');
+        $this->getJson('/api/user/returns')->assertOk()->assertJsonCount(2, '0.images');
+        $url = $this->getJson("/api/user/returns/{$id}")->assertOk()->assertJsonCount(2, 'images')->json('images.0.full_url');
+        $this->assertSame($created->json('data.images.0.id'), $this->getJson("/api/user/returns/{$id}")->json('images.0.id'));
+
+        // The link opens without a token, as the app loads images.
+        $this->app['auth']->forgetGuards();
+        $response = $this->get($url)->assertOk();
+        $this->assertStringStartsWith('image/', $response->headers->get('content-type'));
+    }
+
     public function test_legacy_public_files_are_still_found_until_moved(): void
     {
         Storage::disk('public')->put('payments/old.jpg', 'old');

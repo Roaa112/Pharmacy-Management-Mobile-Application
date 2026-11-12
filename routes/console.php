@@ -18,8 +18,9 @@ Artisan::command('inspire', function () {
 // Remove expired Sanctum tokens (see SANCTUM_EXPIRATION).
 Schedule::command('sanctum:prune-expired --hours=24')->daily()->onOneServer()->withoutOverlapping(60);
 
-// Health reminders (pharmacy local time). Duplicates are prevented by notification_deliveries.
-Schedule::command('health:send-reminders --vaccines')->dailyAt('09:00')->timezone(config('pharmacy.timezone'))->onOneServer()->withoutOverlapping(60);
+// Health reminders (pharmacy local time). Duplicates are prevented by notification_deliveries. Vaccine
+// reminders go out from the send time set in Health › Settings (default 09:00), checked every 15 minutes.
+Schedule::command('health:send-reminders --vaccines')->everyFifteenMinutes()->onOneServer()->withoutOverlapping(15);
 Schedule::command('health:send-reminders --medications')->everyFiveMinutes()->onOneServer()->withoutOverlapping(10);
 
 // Ledger entries for points that passed their validity.

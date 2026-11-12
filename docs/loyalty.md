@@ -92,7 +92,11 @@ Every step is keyed by its event (`idempotency_key`, unique), so repeating it ch
   ledger → audit log. Concurrent redemptions wait for each other; the same `Idempotency-Key`
   returns the first redemption.
 * **Workflow**: `pending` → `approved` → `fulfilled` (staff hand it over; a product reward leaves the
-  default warehouse as a recorded stock adjustment). `pending`/`approved` → `cancelled` (staff, with a
+  default warehouse as a recorded stock adjustment).
+* **Reward types**: `product`, `free_delivery`, `voucher`, `custom`. Only `product` rewards have an
+  automatic effect (the stock movement on fulfilment). For the other types nothing is generated or
+  applied automatically — no coupon or voucher code, no free-delivery credit at checkout; staff honour
+  them by hand. `pending`/`approved` → `cancelled` (staff, with a
   reason) or `expired` (not collected in time): stock and points go back.
 
 ## Manual adjustments (`loyalty.adjust_points`)

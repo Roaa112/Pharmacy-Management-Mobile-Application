@@ -16,7 +16,11 @@ class SendHealthReminders extends Command
         $all = !$this->option('vaccines') && !$this->option('medications');
 
         if ($all || $this->option('vaccines')) {
-            $this->info('Vaccine reminders queued: '.$reminders->queueVaccineReminders());
+            // Scheduled every 15 minutes; nothing goes out before the configured send time, and a
+            // vaccine is reminded once (notification_deliveries), so later runs the same day are no-ops.
+            $this->info($reminders->vaccineSendTimeReached()
+                ? 'Vaccine reminders queued: '.$reminders->queueVaccineReminders()
+                : 'Vaccine reminders: not yet the send time.');
         }
 
         if ($all || $this->option('medications')) {

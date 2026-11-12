@@ -1,7 +1,9 @@
 # Orders, stock and money — how the system behaves
 
 Reference for developers and the business owner. "Decision needed" marks behaviour that is
-implemented as it was originally written but that the business has not confirmed.
+implemented as it was originally written but that the business has not confirmed. Per-module detail
+is in the [functional documentation](functional/README.md); promotion rules are in
+[marketing-promotions.md](marketing-promotions.md) and loyalty rules in [loyalty.md](loyalty.md).
 
 **The store currently operates in Egypt only and uses EGP.** There is no country selection for
 customers or admins and no multi-country behaviour: addresses, delivery zones and rates use Egyptian
@@ -79,12 +81,16 @@ applied to the current stock. A change that would make stock negative is rejecte
 ## 2. Order lifecycle
 
 ```
-pending ──► confirmed ──► on_delivery ──► completed
-   │            │              │
-   └────────────┴──────────────┴──► canceled
+pending ──► confirmed ──► picking ──► packed ──► on_delivery ──► completed
+   │            │            │          │            │
+   └────────────┴────────────┴──────────┴────────────┴──► canceled
 ```
 
 * Status can only move forward; steps may be skipped (e.g. pending → completed for pickup).
+* `picking` and `packed` are warehouse steps; customer apps receive them as `confirmed` (the exact
+  step is `fulfillment_stage`).
+* An online (Paymob) order cannot move to any status but `canceled` until it is paid; paid orders are
+  not confirmed automatically.
 * `completed` and `canceled` are final. The graph is protected code (`App\Enums\OrderStatus`).
 * Every change goes through `OrderWorkflow::transition()`: dashboard, customer cancellation and
   shipment events alike. Each change writes `order_status_histories` (from, to, actor type, actor id).
@@ -169,22 +175,29 @@ is projected from the latest one by `PaymentService`.
 * `payment_status`: unpaid → paid (cash on completion, Paymob on confirmation); historical transfer
   receipts: awaiting_verification → paid/failed by an admin. Refunds reach the total → refunded.
   The verifying admin and time are recorded.
-* Revenue = completed orders − refunds approved on them, grouped by the store's local day (D3).
+* Revenue = completed orders − money actually refunded on them (succeeded refunds; refunds of
+  duplicate captures excluded), grouped by the store's local day (D3, `App\Modules\Reports\Revenue`).
 
 ## 4. Returns and refunds
 
-* A customer can request a return on their own, non-canceled order.
+* A customer can request a return on their own, non-canceled order once at least one unit has been
+  dispatched (an order still being prepared is canceled instead).
 * The sum of all pending + accepted refund amounts for an order cannot exceed the order total.
 * The admin accepts or rejects a pending request once (row lock; a repeat is refused); the customer
   can cancel a pending one. Accepted refunds of an order never add up to more than its total.
 * Accepting (one transaction, `ReturnDecisionService`):
-  1. records the refund the admin approves (`approved_amount`; pay it outside the system);
+  1. records the amount the admin approves (`approved_amount`) and creates a **pending refund** for
+     it against the payment that received the money (paid out from *Payments › Refunds*; refused when
+     no money was received, e.g. unpaid COD);
   2. puts the units received back, per order line, into **quarantine** (`quarantined_stock`). They are
-     never sellable; no more units than were ordered can be returned (decision D1). Releasing
-     quarantined stock is **not implemented**: it needs its own authorised, audited process;
-  3. reverses loyalty points in proportion to the money refunded (decision D2, section 5).
-* The order is then hidden from the customer's order list (unchanged). Revenue drops by the approved
-  refund, not by the whole order (D3). The customer can still request a further partial return on it.
+     never sold automatically; no more units than were ordered can be returned (decision D1). Staff
+     release them only through the audited quarantine inspection on *Inventory › SKU* (restock /
+     damaged / disposed, `inventory.adjust`);
+  3. reverses loyalty points in proportion to the money refunded (decision D2, section 5) and gives
+     back, in the same proportion, points the customer paid with.
+* The order is then hidden from the customer's order list (unchanged). Revenue drops by the money
+  actually refunded (succeeded refunds), not by the whole order (D3). The customer can still request a
+  further partial return on it.
 * Refunds paid through Paymob: a request without a usable answer is **unknown** and is never sent
   again by itself. It becomes **failed** (sendable again) only when Paymob declines that refund, or
   when a second admin records, from the Paymob dashboard, that it was not paid out
@@ -224,6 +237,56 @@ The full programme (settings, lots, FIFO, rewards, redemptions) is in [loyalty.m
 * On account: never more than the supplier is owed, unless the admin ticks **advance payment**
   (`supplier_payments.is_advance`); the balance then becomes a credit. Advances can be switched off
   (`PHARMACY_SUPPLIER_ADVANCE_PAYMENTS=false`). A resubmitted form records the payment once.
+* Supplier balance = invoices − payments − credits of dispatched supplier returns.
+* Purchase orders never change stock; receipts do. Expired lots cannot be received.
+
+## 5c. Accounts and access
+
+| Rule | Where |
+|---|---|
+| E-mail and phone are unique per customer; password ≥ 8 | `CreateUserRequest` |
+| OTP: 6 digits, hashed, 10 minutes, ≤ 5 guesses (atomic), ≤ 5 codes / account / hour; answers never reveal whether an e-mail exists | `UserController` |
+| Unverified customers can sign in unless `REQUIRE_VERIFIED_LOGIN=true` | `UserService::login` |
+| Logout and password reset revoke every token; e-mail change and signed-in password change revoke the other tokens | `UserController`, `UserService` |
+| Signed-in password / e-mail change needs the current password (or an OTP) only when `PASSWORD_CHANGE_REQUIRES_CURRENT=true`; otherwise an unproven change is logged and the owner is e-mailed | `UserController::resetPassword`, `UpdateUserRequest` |
+| A deactivated customer is signed out and every token request answers 403 `account_inactive` | `CustomerController::toggleActive`, `EnsureAccountIsActive` |
+| Admins: one role each; super admin holds everything; at least one active super admin; no self-escalation; system roles cannot be deleted | [roles-and-permissions.md](roles-and-permissions.md) |
+| Refund dual control: the requester cannot pay out their own refund (`PHARMACY_REFUND_DUAL_CONTROL`) | `RefundService` |
+
+## 5d. Health services and reminders
+
+Values marked *(dashboard)* are defaults an admin can change under Health content (result rules &
+messages, health settings); see [functional/health-services.md](functional/health-services.md).
+
+| Rule | Value |
+|---|---|
+| Result categories *(dashboard: Result rules & messages, `health_rules.manage`)* | "from ≤ value < to"; blood pressure matches on systolic OR diastolic; highest priority wins; no matching rule → `unknown`; a measurement with no active rule uses the guideline defaults |
+| BMI categories (default) | < 18.5 underweight, < 25 normal, < 30 overweight, < 35 obese 1, < 40 obese 2, else obese 3 |
+| Blood sugar (mg/dL, default) | < 70 low; fasting < 100, after meal < 140, random < 200 normal; else high |
+| Blood pressure (default) | 2017 ACC/AHA; crisis ≥ 181 / ≥ 121 flags `requires_urgent_care` |
+| Ovulation input *(dashboard)* | cycle 21–35 days, period 3–10 days, luteal phase 14 days; start within the last year |
+| Pregnancy | due date = last period + 280 days; last period within 2 years |
+| Child | birth date within 18 years; vaccine schedule generated as a snapshot of the template |
+| Tools *(dashboard)* | a tool switched off refuses new entries (`403 health_tool_disabled`); saved data stays readable and deletable |
+| Messages *(dashboard)* | the result messages (BMI, blood sugar, blood pressure) are edited only on Result rules & messages; all other health texts come from `lang/{ar,en}/health.php` |
+| Vaccine reminders *(dashboard)* | from 09:00 store time (checked every 15 min), window = each vaccine's `reminder_days_before` (default 3); switch `vaccine_reminders_enabled` (on) |
+| Medication reminders *(dashboard)* | every 5 min for doses in the last 15 min; switch `medication_reminders_enabled` (off) |
+| No duplicate reminders | one `notification_deliveries` row per event; ≤ 3 attempts |
+| Health data in the dashboard | `health_data.view`; every view audited; never exported |
+
+## 5e. Contact messages
+
+A conversation is `open` while waiting for the pharmacy and `replied` after a pharmacy reply; a
+customer reply reopens it. Customers see only their own conversations and never staff names. A
+pharmacy reply is delivered once (database notification + push); failures are shown and can be
+resent.
+
+## 5f. Import and export
+
+An import never deletes; each record is validated again and written in its own transaction; inventory
+imports are adjustments with a reason; opening stock in a product import applies to new sizes only;
+SKU/barcode duplicates are errors; nothing is created from a name; sensitive entities are export-only
+with approved columns. Details: [import-export.md](import-export.md).
 
 ## 6. Decisions needed
 
@@ -242,3 +305,6 @@ The full programme (settings, lots, FIFO, rewards, redemptions) is in [loyalty.m
 | D11 | ~~Which market is the store in?~~ **Decided:** Egypt only, EGP. Delivery zones created from old production delivery prices with non-Egyptian names (e.g. Baghdad, Karbala) are kept as data; an admin should deactivate them | Egypt / EGP / Africa/Cairo |
 | D12 | ~~Brand/category gift targets?~~ **Decided:** a gift names a product (and optionally a variant); brand/category gift rules are flagged as errors and cannot be activated | Implemented |
 | D13 | Partially refunded orders are hidden from the customer's order list, but their remaining points are shown | As described |
+| B1 | Online payment window before an unpaid Paymob order is canceled | 60 minutes (`PAYMOB_PAYMENT_TTL_MINUTES`) |
+| B2 | Should a paid Paymob order be confirmed automatically? | No: paid orders wait for an admin to confirm |
+| B3 | Units canceled after dispatch | Back to quarantine for inspection, not on sale |

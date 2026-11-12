@@ -94,12 +94,13 @@ public function store(Request $request)
         }
     }
 
-    return response()->json(['message' => api_trans('returns.created'), 'data' => $return], 201);
+    // Send the photos back with their signed links so the app can show them straight away.
+    return response()->json(['message' => api_trans('returns.created'), 'data' => $return->load('images')], 201);
 }
 
 public function index()
 {
-    $returns = ReturnRequest::with('order')
+    $returns = ReturnRequest::with(['order', 'images'])
         ->where('user_id', auth()->id())
         ->select('id', 'order_id', 'reason', 'status', 'refund_amount', 'created_at')
         ->get();

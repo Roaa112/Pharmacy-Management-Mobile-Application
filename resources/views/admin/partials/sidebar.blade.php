@@ -55,6 +55,8 @@
         'Health content' => [
             ['Vaccination schedule', 'dashboard.health_content.vaccines.index', 'vaccine', ['dashboard.health_content.vaccines.*'], 0, 'health_content'],
             ['Pregnancy weeks', 'dashboard.health_content.pregnancy.index', 'baby-carriage', ['dashboard.health_content.pregnancy.*'], 0, 'health_content'],
+            ['Result rules & messages', 'dashboard.health_content.rules.index', 'heart-rate-monitor', ['dashboard.health_content.rules.*'], 0, 'health_content'],
+            ['Health settings', 'dashboard.health_content.settings.edit', 'adjustments', ['dashboard.health_content.settings.*'], 0, 'health_content'],
         ],
         'Operations' => [
             ['Contact messages', 'dashboard.contacts.index', 'mail', ['dashboard.contacts.*'], $adminAttention['open_contact_messages'] ?? 0, 'contact_messages.view'],

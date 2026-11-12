@@ -25,8 +25,16 @@ class HealthReminderService
     public const VACCINE = 'vaccine_reminder';
     public const MEDICATION = 'medication_reminder';
 
-    /** Medication reminders are sent for doses due in the last MEDICATION_WINDOW_MINUTES. */
-    public const MEDICATION_WINDOW_MINUTES = 15;
+    /**
+     * Whether today's vaccine reminders may go out: the store's local time has reached the
+     * Health › Settings send time (default 09:00). The scheduler checks every 15 minutes.
+     */
+    public function vaccineSendTimeReached(?Carbon $now = null): bool
+    {
+        $now = ($now ?? StoreClock::now())->copy();
+
+        return $now->gte($now->copy()->setTimeFromTimeString(HealthSettings::current()->vaccineReminderTime()));
+    }
 
     /**
      * Vaccines not yet given whose date is between today and today + their reminder lead time.
@@ -39,15 +47,17 @@ class HealthReminderService
         }
 
         $today = ($today ?? StoreClock::now())->copy()->startOfDay();
+        // Vaccines without their own lead time (Health › Settings, default 3 days).
+        $defaultLead = HealthSettings::current()->vaccineDefaultLeadDays();
         $queued = 0;
 
         Vaccine::with('child:id,user_id,child_name')
             ->where('is_completed', false)
             ->whereDate('scheduled_date', '>=', $today->toDateString())
             ->whereDate('scheduled_date', '<=', $today->copy()->addDays(30)->toDateString())
-            ->chunkById(500, function ($vaccines) use ($today, &$queued) {
+            ->chunkById(500, function ($vaccines) use ($today, $defaultLead, &$queued) {
                 foreach ($vaccines as $vaccine) {
-                    $lead = $vaccine->reminder_days_before ?? 3;
+                    $lead = $vaccine->reminder_days_before ?? $defaultLead;
                     $due = $vaccine->scheduled_date->copy()->startOfDay();
 
                     if (!$vaccine->child || $due->gt($today->copy()->addDays($lead))) {
@@ -61,7 +71,7 @@ class HealthReminderService
         return $queued;
     }
 
-    /** Doses whose time passed within the last few minutes, today (pharmacy time). */
+    /** Doses whose time passed within the Health › Settings window (default 15 minutes), today (pharmacy time). */
     public function queueMedicationReminders(?Carbon $now = null): int
     {
         if (!Setting::current()->medication_reminders_enabled) {
@@ -69,7 +79,7 @@ class HealthReminderService
         }
 
         $now = ($now ?? StoreClock::now())->copy();
-        $from = $now->copy()->subMinutes(self::MEDICATION_WINDOW_MINUTES);
+        $from = $now->copy()->subMinutes(HealthSettings::current()->medicationWindowMinutes());
         $day = Str::lower($now->englishDayOfWeek);
         $queued = 0;
 

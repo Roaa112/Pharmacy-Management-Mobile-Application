@@ -42,6 +42,8 @@ use App\Modules\Inventory\PurchaseOrderController;
 use App\Modules\HealthService\Admin\VaccineScheduleController;
 use App\Modules\HealthService\Admin\PregnancyContentController;
 use App\Modules\HealthService\Admin\NotificationLogController;
+use App\Modules\HealthService\Admin\HealthRuleController;
+use App\Modules\HealthService\Admin\HealthSettingsController;
 use App\Modules\Admin\RoleController;
 use App\Modules\Points\LoyaltyDashboardController;
 use App\Modules\Points\LoyaltySettingsController;
@@ -315,7 +317,17 @@ Route::prefix('dashboard')->name('dashboard.')->group(function () use ($resource
     Route::middleware('can:health_content.view')->prefix('health-content')->name('health_content.')->group(function () {
         Route::get('vaccines', [VaccineScheduleController::class, 'index'])->name('vaccines.index');
         Route::get('pregnancy', [PregnancyContentController::class, 'index'])->name('pregnancy.index');
+        Route::get('rules', [HealthRuleController::class, 'index'])->name('rules.index');
+        Route::get('settings', [HealthSettingsController::class, 'edit'])->name('settings.edit');
+        // Medical thresholds and result messages: a permission of their own.
+        Route::middleware('can:health_rules.manage')->group(function () {
+            Route::post('rules', [HealthRuleController::class, 'store'])->name('rules.store');
+            Route::put('rules/{rule}', [HealthRuleController::class, 'update'])->name('rules.update');
+            Route::delete('rules/{rule}', [HealthRuleController::class, 'destroy'])->name('rules.destroy');
+            Route::post('rules/reset/{metric}', [HealthRuleController::class, 'reset'])->whereIn('metric', \App\Models\HealthResultRule::METRICS)->name('rules.reset');
+        });
         Route::middleware('can:health_content.manage')->group(function () {
+            Route::put('settings', [HealthSettingsController::class, 'update'])->name('settings.update');
             Route::post('vaccines', [VaccineScheduleController::class, 'store'])->name('vaccines.store');
             Route::put('vaccines/{item}', [VaccineScheduleController::class, 'update'])->name('vaccines.update');
             Route::delete('vaccines/{item}', [VaccineScheduleController::class, 'destroy'])->name('vaccines.destroy');

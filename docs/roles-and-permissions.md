@@ -48,7 +48,10 @@ models `Role`, `Permission`, `Admin`. Dashboard: **Operations › Roles & permis
 
 ## Migration and existing access
 
-`2026_11_11_000001_create_roles_and_permissions` creates the seven original roles as system roles.
+`2026_11_11_000001_create_roles_and_permissions` creates the seven original roles as system roles
+(later migrations that add permissions, e.g. `2026_11_14_000001_add_replies_to_contact_messages`
+for `contact_messages.reply`, run the synchronizer again). The default role × permission table is in
+[permissions-matrix.md](permissions-matrix.md).
 Each gets every fine-grained permission of the modules it had (`PermissionRegistry::defaultsFor`), so
 nobody gained or lost access to anything that existed. Import/export are new capabilities and are
 granted on purpose only: Manager (catalog, inventory, suppliers, locations, rewards, orders export),
@@ -61,7 +64,7 @@ refunds, point transactions and suppliers export). Customers export is super adm
 | Module | Permissions |
 |---|---|
 | Orders | orders.view, orders.update_status, orders.cancel, orders.export |
-| Customers | customers.view, customers.activate, customers.export, contact_messages.view, contact_messages.delete |
+| Customers | customers.view, customers.activate, customers.export, contact_messages.view, contact_messages.reply, contact_messages.delete |
 | Returns & refunds | refunds.view, refunds.approve, refunds.create, refunds.process, refunds.export |
 | Payments | payments.view, payments.verify, payments.collect, payments.settle_cod, payment_methods.manage, payments.export |
 | Delivery | delivery.view, delivery.manage_zones, delivery.manage_providers, delivery.manage_shipments, locations.manage, locations.import, locations.export |
@@ -71,7 +74,7 @@ refunds, point transactions and suppliers export). Customers export is super adm
 | Marketing | marketing.view, promotions.manage, campaigns.manage, coupons.manage, flash_sales.manage, banners.manage |
 | Loyalty | loyalty.view, loyalty.manage, loyalty.adjust_points, loyalty.manage_rewards, loyalty.settings, loyalty_rewards.import, loyalty_rewards.export, loyalty_transactions.export |
 | Reports | reports.view |
-| Health | health_data.view, health_content.view, health_content.manage |
+| Health | health_data.view, health_content.view, health_content.manage, health_rules.manage (medical thresholds; by default Health Specialist only) |
 | Settings | settings.view, settings.update |
 | Admins & roles | admins.view, admins.create, admins.update, roles.view, roles.manage, roles.assign, audit_log.view |
 

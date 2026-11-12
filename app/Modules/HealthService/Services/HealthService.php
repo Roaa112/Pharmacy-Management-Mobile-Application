@@ -3,6 +3,7 @@
 namespace App\Modules\HealthService\Services;
 
 use App\Enums\BloodSugarCondition;
+use App\Models\HealthResultRule;
 use App\Models\BloodPressureMeasurement;
 use App\Models\BloodSugarMeasurement;
 use App\Models\BodyWeightResult;
@@ -17,29 +18,53 @@ use Illuminate\Database\Eloquent\Builder;
 /**
  * Health calculations.
  *
- * The medical rules (thresholds, formulas, cycle and pregnancy arithmetic) are protected code:
- * they follow published guidelines, are covered by boundary tests and change only through code
- * review. GUIDELINES says which version each follows and is returned with every result.
+ * Dashboard-controlled (Health content): the result categories of BMI, blood sugar and blood
+ * pressure — thresholds, labels, messages, urgent flag — are HealthResultRule rows (seeded with
+ * the WHO / ADA / ACC-AHA guideline values); the ovulation parameters, BMI ideal range, guideline
+ * names and disclaimer are HealthSettings; every other text comes from lang/{ar,en}/health.php.
+ * The arithmetic itself (BMI formula, cycle and pregnancy dates) stays in code.
  *
- * Display text comes from lang/{ar,en}/health.php. Fields older apps may compare against
- * (phase, status, evaluation, trimester...) keep their exact Arabic wording ("legacy"); the
- * *_code fields are stable identifiers and the *_label fields follow Accept-Language.
- *
- * Content that is information rather than calculation (vaccination schedule, pregnancy week
- * content) is managed from the dashboard.
+ * Fields older apps may compare against (phase, status, evaluation, trimester...) keep their
+ * exact Arabic wording ("legacy"); the *_code fields are stable identifiers and the *_label
+ * fields follow Accept-Language.
  */
 class HealthService
 {
-    public const GUIDELINES = [
-        'bmi' => 'WHO adult BMI classification',
-        'blood_sugar' => 'ADA Standards of Care (mg/dL)',
-        'blood_pressure' => '2017 ACC/AHA',
-        'ovulation' => 'Fixed 14-day luteal phase; fertile window per Wilcox et al. 1995',
-        'pregnancy' => 'Naegele rule (LMP + 280 days); ACOG trimesters',
-    ];
-
-    public function __construct(private VaccineScheduleService $vaccines)
+    public function __construct(private VaccineScheduleService $vaccines, private HealthEvaluator $evaluator)
     {
+    }
+
+    private ?HealthSettings $settings = null;
+
+    private function settings(): HealthSettings
+    {
+        return $this->settings ??= HealthSettings::current();
+    }
+
+    /** Code, texts and urgency of a classified reading ("unknown" when no rule covers it). */
+    private function classification(?HealthResultRule $rule, string $unknownLabelKey, ?string $unknownLegacyKey = null): array
+    {
+        $locale = api_locale();
+
+        if (!$rule) {
+            return [
+                'code' => 'unknown',
+                'legacy' => __($unknownLegacyKey ?? $unknownLabelKey, [], 'ar'),
+                'label' => __($unknownLabelKey, [], $locale),
+                'message' => null,
+                'message_ar' => null,
+                'urgent' => false,
+            ];
+        }
+
+        return [
+            'code' => $rule->code,
+            'legacy' => $rule->legacyText(),
+            'label' => $rule->label($locale),
+            'message' => $rule->message($locale),
+            'message_ar' => $rule->message('ar'),
+            'urgent' => (bool) $rule->requires_urgent_care,
+        ];
     }
 
     // ---------------------------------------------------------------- history
@@ -88,24 +113,11 @@ class HealthService
 
     // -------------------------------------------------------------- ovulation
 
-    /**
-     * Chance of pregnancy per cycle phase. Ovulation is cycle_length - 14 (14-day luteal phase);
-     * the fertile window is the 5 days before ovulation, ovulation day and 2 days after.
-     * Values follow the shape of Wilcox et al. (NEJM 1995): highest on the 2 days before and on
-     * ovulation day, and close to zero once the egg is gone (1-2 days after).
+    /*
+     * Ovulation is cycle_length - luteal phase (Health settings, default 14 days); the fertile
+     * window is the 5 days before ovulation, ovulation day and 2 days after. The chance of
+     * pregnancy per phase is a Health setting (defaults follow Wilcox et al., NEJM 1995).
      */
-    public const OVULATION_PHASE_CHANCES = [
-        'menstruation' => '0%',
-        'not_fertile' => '0%',
-        'fertile_low' => '10%',     // 5 days before ovulation
-        'fertile_medium' => '15%',  // 4-3 days before
-        'fertile_high' => '25%',    // 2-1 days before
-        'ovulation' => '30%',
-        'fertile_after' => '5%',    // 1-2 days after
-        'post_ovulation' => '0%',
-    ];
-
-    public const LUTEAL_PHASE_DAYS = 14;
 
     public function calculateOvulation($userId, array $validated)
     {
@@ -159,14 +171,15 @@ class HealthService
                 'fertile_end' => $fertileEnd->toDateString(),
                 'next_period_start' => $nextPeriodStart->toDateString(),
                 'days' => $days,
-                'guideline' => self::GUIDELINES['ovulation'],
+                'guideline' => $this->settings()->guideline('ovulation'),
+                'disclaimer' => $this->settings()->disclaimer(api_locale()),
             ],
         ];
     }
 
     public function ovulationDay(Carbon $cycleStart, int $cycleLength): Carbon
     {
-        return $cycleStart->copy()->addDays($cycleLength - self::LUTEAL_PHASE_DAYS);
+        return $cycleStart->copy()->addDays($cycleLength - $this->settings()->lutealPhaseDays());
     }
 
     /**
@@ -194,7 +207,7 @@ class HealthService
         return [
             'phase' => __("health.legacy.ovulation_{$labels}.{$code}", [], 'ar'),
             'phase_code' => $code,
-            'pregnancy_chance' => self::OVULATION_PHASE_CHANCES[$code],
+            'pregnancy_chance' => $this->settings()->phaseChance($code),
             'phase_label' => api_trans("health.phase.{$code}"),
         ];
     }
@@ -207,19 +220,13 @@ class HealthService
         $weightKg = $data['unit'] === 'metric' ? $data['weight'] : $data['weight'] * 0.453592;
         $bmi = round($weightKg / ($heightMeters * $heightMeters), 1);
 
-        // WHO classification for adults.
-        $statusCode = match (true) {
-            $bmi < 18.5 => 'underweight',
-            $bmi < 25 => 'normal',
-            $bmi < 30 => 'overweight',
-            $bmi < 35 => 'obese_class_1',
-            $bmi < 40 => 'obese_class_2',
-            default => 'obese_class_3',
-        };
+        // Category from the BMI result rules (default: WHO classification for adults).
+        $result = $this->classification($this->evaluator->evaluate(HealthResultRule::BMI, $bmi), 'health.result_unknown');
 
-        // Healthy range: BMI 18.5 to 24.9.
-        $minIdealWeight = round(18.5 * ($heightMeters ** 2), 1);
-        $maxIdealWeight = round(24.9 * ($heightMeters ** 2), 1);
+        // Healthy range (Health settings; default BMI 18.5 to 24.9).
+        [$idealMin, $idealMax] = $this->settings()->bmiIdealRange();
+        $minIdealWeight = round($idealMin * ($heightMeters ** 2), 1);
+        $maxIdealWeight = round($idealMax * ($heightMeters ** 2), 1);
 
         // status, description and ideal range are derived from bmi_result and not stored.
         BodyWeightResult::create([
@@ -234,16 +241,18 @@ class HealthService
             'message' => api_trans('health.messages.bmi_calculated'),
             'data' => [
                 'bmi' => $bmi,
-                'status' => __("health.bmi.{$statusCode}.status", [], 'ar'),
-                'status_code' => $statusCode,
-                'description' => __("health.bmi.{$statusCode}.description", [], 'ar'),
+                'status' => $result['legacy'],
+                'status_code' => $result['code'],
+                'description' => $result['message_ar'],
                 'ideal_range' => __('health.bmi.ideal_range', ['min' => $minIdealWeight, 'max' => $maxIdealWeight], 'ar'),
-                'status_label' => api_trans("health.bmi.{$statusCode}.status"),
-                'description_label' => api_trans("health.bmi.{$statusCode}.description"),
+                'status_label' => $result['label'],
+                'description_label' => $result['message'],
                 'ideal_min_kg' => $minIdealWeight,
                 'ideal_max_kg' => $maxIdealWeight,
                 'note' => api_trans('health.bmi.adult_only'),
-                'guideline' => self::GUIDELINES['bmi'],
+                'requires_urgent_care' => $result['urgent'],
+                'guideline' => $this->settings()->guideline('bmi'),
+                'disclaimer' => $this->settings()->disclaimer(api_locale()),
             ],
         ];
     }
@@ -255,7 +264,8 @@ class HealthService
         $data['user_id'] = $userId;
         $record = BloodSugarMeasurement::create($data);
 
-        $code = $this->evaluateBloodSugar((float) $data['value'], (string) $data['condition_type']);
+        $result = $this->classification($this->bloodSugarRule((float) $data['value'], (string) $data['condition_type']),
+            'health.blood_sugar.unknown', 'health.legacy.blood_sugar.unknown');
 
         return [
             'message' => api_trans('health.messages.blood_sugar_saved'),
@@ -263,30 +273,31 @@ class HealthService
                 'value' => $record->value,
                 'condition_type' => $record->condition_type,
                 'measured_at' => $record->measured_at,
-                'evaluation' => __("health.legacy.blood_sugar.{$code}", [], 'ar'),
-                'evaluation_code' => $code,
-                'evaluation_label' => api_trans("health.blood_sugar.{$code}"),
+                'evaluation' => $result['legacy'],
+                'evaluation_code' => $result['code'],
+                'evaluation_label' => $result['label'],
                 'condition_code' => BloodSugarCondition::fromInput((string) $data['condition_type'])?->value,
-                'guideline' => self::GUIDELINES['blood_sugar'],
+                'requires_urgent_care' => $result['urgent'],
+                'advice' => $result['message'],
+                'guideline' => $this->settings()->guideline('blood_sugar'),
+                'disclaimer' => $this->settings()->disclaimer(api_locale()),
             ],
         ];
     }
 
     /**
-     * mg/dL, ADA Standards of Care: below 70 is hypoglycaemia at any time; fasting normal is
-     * below 100; after a meal normal is below 140; a random value of 200+ is high.
+     * mg/dL, classified by the blood sugar result rules (defaults, ADA Standards of Care: below 70
+     * is low at any time; fasting normal is below 100; after a meal below 140; random below 200).
+     * A reading whose condition is not recognised only matches rules for any condition.
      */
+    public function bloodSugarRule(float $value, string $condition): ?HealthResultRule
+    {
+        return $this->evaluator->evaluate(HealthResultRule::BLOOD_SUGAR, $value, null, HealthEvaluator::sugarGroup($condition));
+    }
+
     public function evaluateBloodSugar(float $value, string $condition): string
     {
-        $condition = BloodSugarCondition::fromInput($condition);
-
-        return match (true) {
-            $value < 70 => 'low',
-            $condition === null => 'unknown',
-            $condition->isFastingLike() => $value < 100 ? 'normal' : 'high',
-            $condition === BloodSugarCondition::AfterMeal => $value < 140 ? 'normal' : 'high',
-            default => $value < 200 ? 'normal' : 'high', // random
-        };
+        return $this->bloodSugarRule($value, $condition)?->code ?? 'unknown';
     }
 
     // --------------------------------------------------------- blood pressure
@@ -296,8 +307,7 @@ class HealthService
         $data['user_id'] = $userId;
         $record = BloodPressureMeasurement::create($data);
 
-        $code = $this->evaluateBloodPressure((int) $data['systolic'], (int) $data['diastolic']);
-        $crisis = $code === 'hypertensive_crisis';
+        $result = $this->classification($this->bloodPressureRule((int) $data['systolic'], (int) $data['diastolic']), 'health.result_unknown');
 
         return [
             'message' => api_trans('health.messages.blood_pressure_saved'),
@@ -306,33 +316,32 @@ class HealthService
                 'diastolic' => $record->diastolic,
                 'condition_type' => $record->condition_type,
                 'measured_at' => $record->measured_at,
-                // A crisis keeps the "stage 2" wording the app always received in evaluation;
-                // requires_urgent_care and advice are what tell the user to act now.
-                'evaluation' => __("health.legacy.blood_pressure.{$code}", [], 'ar'),
-                'evaluation_code' => $code,
-                'evaluation_label' => api_trans("health.blood_pressure.{$code}"),
-                'requires_urgent_care' => $crisis,
-                'advice' => $crisis ? api_trans('health.blood_pressure.crisis_advice') : null,
-                'guideline' => self::GUIDELINES['blood_pressure'],
+                // The default crisis rule keeps the "stage 2" wording the app always received in
+                // evaluation; requires_urgent_care and advice are what tell the user to act now.
+                'evaluation' => $result['legacy'],
+                'evaluation_code' => $result['code'],
+                'evaluation_label' => $result['label'],
+                'requires_urgent_care' => $result['urgent'],
+                'advice' => $result['message'],
+                'guideline' => $this->settings()->guideline('blood_pressure'),
+                'disclaimer' => $this->settings()->disclaimer(api_locale()),
             ],
         ];
     }
 
     /**
-     * mmHg, 2017 ACC/AHA categories; the higher category of the two numbers wins. Low is below
-     * 90 systolic or below 60 diastolic. Readings are classified as measured: the guideline has
-     * no allowance for meals, so condition_type does not change the result.
+     * mmHg, classified by the blood pressure result rules: a rule matches on the systolic OR the
+     * diastolic range and the highest priority wins, i.e. the higher category of the two numbers
+     * (defaults: 2017 ACC/AHA). The condition the reading was taken in does not change the result.
      */
+    public function bloodPressureRule(int $systolic, int $diastolic): ?HealthResultRule
+    {
+        return $this->evaluator->evaluate(HealthResultRule::BLOOD_PRESSURE, $systolic, $diastolic);
+    }
+
     public function evaluateBloodPressure(int $systolic, int $diastolic): string
     {
-        return match (true) {
-            $systolic > 180 || $diastolic > 120 => 'hypertensive_crisis',
-            $systolic >= 140 || $diastolic >= 90 => 'stage_2',
-            $systolic >= 130 || $diastolic >= 80 => 'stage_1',
-            $systolic < 90 || $diastolic < 60 => 'low',
-            $systolic >= 120 => 'elevated',
-            default => 'normal',
-        };
+        return $this->bloodPressureRule($systolic, $diastolic)?->code ?? 'unknown';
     }
 
     // -------------------------------------------------------------- pregnancy
@@ -433,7 +442,8 @@ class HealthService
             'trimester_label' => api_trans("health.pregnancy.trimester.{$trimester}"),
             'tip' => $content?->text('tip', $locale),
             'image_url' => $content?->image ? asset($content->image) : null,
-            'guideline' => self::GUIDELINES['pregnancy'],
+            'guideline' => $this->settings()->guideline('pregnancy'),
+            'disclaimer' => $this->settings()->disclaimer($locale),
         ];
     }
 

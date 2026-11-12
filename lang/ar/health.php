@@ -44,6 +44,9 @@ return [
         ],
     ],
 
+    // A reading no result rule covers (Health content › Result rules).
+    'result_unknown' => 'غير معروف',
+
     'phase' => [
         'menstruation' => 'حيض',
         'not_fertile' => 'غير خصبة',
@@ -108,6 +111,7 @@ return [
         'child_deleted' => 'تم حذف الطفل بنجاح',
         'device_registered' => 'تم تسجيل الجهاز للإشعارات',
         'device_removed' => 'تم إلغاء تسجيل الجهاز',
+        'tool_disabled' => 'هذه الخدمة غير متاحة حاليًا.',
     ],
 
     'medication' => [
