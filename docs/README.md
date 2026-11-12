@@ -1,6 +1,6 @@
 # Documentation
 
-Reference documentation for the Alkawthar pharmacy backend (customer API + admin dashboard). It
+Reference documentation for the Our Pharmacy backend (customer API + admin dashboard). It
 describes the code as it is; incomplete, unverified, legacy and undecided items are marked where they
 appear and collected in [known-gaps.md](known-gaps.md).
 

@@ -198,7 +198,7 @@ connection, ≤ 5 MB, JPG/PNG/WebP by content).
 
 | Key | Env | Default | Meaning |
 |---|---|---|---|
-| `name` | `PHARMACY_NAME` | `Alkawthar` | Dashboard name |
+| `name` | `PHARMACY_NAME` | `Our Pharmacy` | Dashboard name |
 | `country`, `currency` | — (fixed) | `EG`, `EGP` | Egypt-only store |
 | `low_stock_threshold` | `PHARMACY_LOW_STOCK_THRESHOLD` | 5 | Fallback for `settings.low_stock_threshold` |
 | `timezone` | `PHARMACY_TIMEZONE` | `Africa/Cairo` | Store clock |

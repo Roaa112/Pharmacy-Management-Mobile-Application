@@ -2,7 +2,7 @@
 
 ## 1. What this repository is
 
-The **backend** of the Alkawthar pharmacy e-commerce system (store branding `elkawther` / Alkawthar):
+The **backend** of the Our Pharmacy e-commerce system:
 
 * a **JSON API** for the customer mobile app (catalog, cart, checkout, orders, payments, returns,
   loyalty, health tools, notifications, contact), and

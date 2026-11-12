@@ -1,6 +1,6 @@
-# Alkawthar Pharmacy — backend
+# Our Pharmacy — backend
 
-Laravel 12 backend of the Alkawthar online pharmacy: the **JSON API** used by the customer mobile app
+Laravel 12 backend of the Our Pharmacy online store: the **JSON API** used by the customer mobile app
 and the **admin dashboard** used by pharmacy staff. The store sells in **Egypt only, in EGP**, on
 Egyptian local time (`Africa/Cairo`). The mobile app itself is a separate project.
 

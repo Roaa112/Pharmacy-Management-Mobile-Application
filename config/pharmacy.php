@@ -2,7 +2,7 @@
 
 return [
     // Shown in the admin sidebar and page titles.
-    'name' => env('PHARMACY_NAME', 'Alkawthar'),
+    'name' => env('PHARMACY_NAME', 'Our Pharmacy'),
 
     // The store currently operates in Egypt only and uses EGP. These are fixed, not environment
     // settings: there is no other market or currency to switch to.
